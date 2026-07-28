@@ -1,0 +1,170 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #faf8f2;
+    color: #221f1c;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: #f5e1d6;
+    color: #221f1c;
+  }
+}
+
+@layer components {
+  .reading-text {
+    font-family: 'Newsreader', Georgia, serif;
+    font-size: 1.25rem;
+    line-height: 1.85;
+    color: #322e2a;
+    letter-spacing: -0.003em;
+  }
+
+  .reading-text p {
+    margin-bottom: 1.5rem;
+  }
+
+  .reading-text p:last-child {
+    margin-bottom: 0;
+  }
+
+  .reading-text h2 {
+    font-size: 1.75rem;
+    line-height: 1.3;
+    margin-top: 2.5rem;
+    margin-bottom: 1rem;
+    color: #161412;
+    font-weight: 500;
+  }
+
+  .reading-text h3 {
+    font-size: 1.35rem;
+    line-height: 1.35;
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+    color: #221f1c;
+    font-weight: 500;
+  }
+
+  .reading-text blockquote {
+    border-left: 3px solid #dd9f7d;
+    padding-left: 1.5rem;
+    margin: 2rem 0;
+    font-style: italic;
+    color: #5c5347;
+  }
+
+  .reading-text ul {
+    margin: 1rem 0 1.5rem 1.5rem;
+    list-style-type: disc;
+  }
+
+  .reading-text ol {
+    margin: 1rem 0 1.5rem 1.5rem;
+    list-style-type: decimal;
+  }
+
+  .reading-text li {
+    margin-bottom: 0.5rem;
+    line-height: 1.7;
+  }
+
+  .reading-text strong {
+    font-weight: 600;
+    color: #161412;
+  }
+
+  .reading-text em {
+    font-style: italic;
+  }
+
+  .reading-text code {
+    font-family: 'Inter', monospace;
+    font-size: 0.95rem;
+    background-color: #f4f0e6;
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.3rem;
+    color: #7a3a20;
+  }
+
+  .reading-text .key-term {
+    color: #9c4a26;
+    font-weight: 500;
+    font-style: italic;
+  }
+
+  .reading-text .callout {
+    background-color: #f7f3ea;
+    border: 1px solid #efe7d6;
+    border-radius: 1rem;
+    padding: 1.5rem 1.75rem;
+    margin: 2rem 0;
+  }
+
+  .reading-text .callout-title {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9c4a26;
+    margin-bottom: 0.5rem;
+  }
+
+  .reading-text .callout p {
+    margin-bottom: 0;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #d4cec5 transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #d4cec5;
+    border-radius: 3px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: #b8afa3;
+  }
+
+  .perspective {
+    perspective: 1200px;
+  }
+
+  .backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+
+  .rotate-y-180 {
+    transform: rotateY(180deg);
+  }
+
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+}
