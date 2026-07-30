@@ -21,6 +21,7 @@ function App() {
   const [view, setView] = useState<View>({ name: 'dashboard' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [showAuth, setShowAuth] = useState(false);
 
   const navigate = useCallback((v: View) => {
     setView(v);
@@ -46,7 +47,17 @@ function App() {
   }
 
   if (!user) {
-    return <AuthPage onSignIn={signInWithEmail} onSignUp={signUpWithEmail} onGoogleSignIn={signInWithGoogle} />;
+    if (showAuth) {
+      return (
+        <AuthPage
+          onSignIn={signInWithEmail}
+          onSignUp={signUpWithEmail}
+          onGoogleSignIn={signInWithGoogle}
+          onBack={() => setShowAuth(false)}
+        />
+      );
+    }
+    return <LandingPage onGetStarted={() => setShowAuth(true)} />;
   }
 
   const renderContent = () => {

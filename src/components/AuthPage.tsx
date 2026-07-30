@@ -1,13 +1,14 @@
 import { useState, FormEvent } from 'react';
-import { Sparkles, Mail, Lock, ArrowRight, Loader2 } from 'lucide-react';
+import { Sparkles, Mail, Lock, ArrowRight, Loader2, ArrowLeft } from 'lucide-react';
 
 interface AuthPageProps {
   onSignIn: (email: string, password: string) => Promise<{ error: { message: string } | null }>;
   onSignUp: (email: string, password: string) => Promise<{ error: { message: string } | null; session: unknown | null }>;
   onGoogleSignIn: () => Promise<{ error: { message: string } | null }>;
+  onBack?: () => void;
 }
 
-export function AuthPage({ onSignIn, onSignUp, onGoogleSignIn }: AuthPageProps) {
+export function AuthPage({ onSignIn, onSignUp, onGoogleSignIn, onBack }: AuthPageProps) {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -44,6 +45,15 @@ export function AuthPage({ onSignIn, onSignUp, onGoogleSignIn }: AuthPageProps) 
   return (
     <div className="min-h-screen flex items-center justify-center px-5 py-12">
       <div className="w-full max-w-md">
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="inline-flex items-center gap-1.5 text-xs text-warmgray-400 hover:text-ink-600 mb-6 transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.5} />
+            Back to home
+          </button>
+        )}
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-terracotta-50 border border-terracotta-100 mb-5">
             <Sparkles className="w-3.5 h-3.5 text-terracotta-500" strokeWidth={1.5} />
