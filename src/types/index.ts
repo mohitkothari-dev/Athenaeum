@@ -103,3 +103,17 @@ export interface UserSession {
     email: string;
   } | null;
 }
+
+export interface AppDocument {
+  id: string;
+  user_id: string;
+  parent_id: string | null;
+  title: string;
+  icon: string | null;
+  cover_image: string | null;
+  content: string;
+  course_id: string | null;
+  lesson_id: string | null;
+  created_at: string;
+  updated_at: string;
+}

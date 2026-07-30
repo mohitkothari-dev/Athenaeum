@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Clock, CheckCircle, Circle, ArrowRight, BookOpen, Loader2 } from 'lucide-react';
+import { ArrowLeft, Clock, CheckCircle, ArrowRight, BookOpen, Loader2 } from 'lucide-react';
 import type { Course, Module, LessonProgress } from '@/types';
 import { fetchCourseWithModules, fetchLessonProgress } from '@/lib/api';
 

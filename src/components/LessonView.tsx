@@ -4,10 +4,10 @@ import {
   Zap, Smile, Layers, ListChecks, Wrench, Loader2,
   Check, X, RotateCw, Target, Lightbulb,
 } from 'lucide-react';
-import type { Course, Module, Lesson, LearningMode, QuizQuestion } from '@/types';
+import type { Course, Module, Lesson, LearningMode } from '@/types';
 import {
   fetchCourseWithModules, fetchLessonProgress, updateLessonProgress,
-  saveQuizResult, recordFlashcardReview, fetchFlashcardReviews,
+  saveQuizResult, recordFlashcardReview,
 } from '@/lib/api';
 
 interface LessonViewProps {

@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import type { Course, Module, Lesson, LessonProgress, QuizResult, FlashcardReview } from '@/types';
+import type { Course, Module, Lesson, LessonProgress, QuizResult, FlashcardReview, AppDocument } from '@/types';
 
 function parseLesson(raw: Record<string, unknown>): Lesson {
   return {
@@ -231,4 +231,68 @@ export async function generateCourse(
   } catch {
     return { error: 'Failed to connect to AI service' };
   }
+}
+
+export async function fetchDocuments(): Promise<AppDocument[]> {
+  const { data, error } = await supabase
+    .from('documents')
+    .select('*')
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data || []) as AppDocument[];
+}
+
+export async function createDocument(
+  title: string,
+  parentId: string | null = null,
+  courseId: string | null = null,
+  lessonId: string | null = null,
+  content: string = '',
+): Promise<AppDocument> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const userId = sessionData.session?.user?.id;
+  if (!userId) throw new Error('Not authenticated');
+
+  const { data, error } = await supabase
+    .from('documents')
+    .insert({
+      title,
+      parent_id: parentId,
+      course_id: courseId,
+      lesson_id: lessonId,
+      user_id: userId,
+      content,
+      icon: '📝',
+    })
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data as AppDocument;
+}
+
+export async function updateDocument(
+  id: string,
+  updates: Partial<Omit<AppDocument, 'id' | 'user_id' | 'created_at'>>,
+): Promise<AppDocument> {
+  const { data, error } = await supabase
+    .from('documents')
+    .update({
+      ...updates,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data as AppDocument;
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('documents')
+    .delete()
+    .eq('id', id);
+  if (error) throw error;
 }
