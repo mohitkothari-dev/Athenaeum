@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CheckCircle, Clock, Award, Layers, Loader2, ArrowRight, Flame } from 'lucide-react';
-import type { Course, LessonProgress, QuizResult } from '@/types';
+import { CheckCircle, Clock, Award, Loader2, ArrowRight, Flame } from 'lucide-react';
+import type { Course, QuizResult } from '@/types';
 import { fetchCourses, fetchLessonProgress, fetchQuizResults } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 

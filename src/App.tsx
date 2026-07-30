@@ -8,13 +8,18 @@ import { CourseGenerator } from '@/components/CourseGenerator';
 import { CourseView } from '@/components/CourseView';
 import { LessonView } from '@/components/LessonView';
 import { ProgressView } from '@/components/ProgressView';
+import { DocumentEditor } from '@/components/DocumentEditor';
+import { Sidebar } from '@/components/Sidebar';
+import type { AppDocument, Course } from '@/types';
+import { fetchDocuments, createDocument, updateDocument, deleteDocument, fetchCourses } from '@/lib/api';
 
 type View =
   | { name: 'dashboard' }
   | { name: 'generate' }
   | { name: 'course'; courseId: string }
   | { name: 'lesson'; courseId: string; lessonId: string }
-  | { name: 'progress' };
+  | { name: 'progress' }
+  | { name: 'document'; documentId: string };
 
 function App() {
   const { user, loading, signInWithEmail, signUpWithEmail, signInWithGoogle, signOut } = useAuth();
@@ -22,6 +27,74 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showAuth, setShowAuth] = useState(false);
+
+  const [documents, setDocuments] = useState<AppDocument[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [coursesLoading, setCoursesLoading] = useState(false);
+
+  // Load documents and courses
+  useEffect(() => {
+    if (user) {
+      setDocsLoading(true);
+      setCoursesLoading(true);
+      
+      fetchDocuments()
+        .then(setDocuments)
+        .catch(err => console.error('Failed to load documents:', err))
+        .finally(() => setDocsLoading(false));
+      
+      fetchCourses()
+        .then(setCourses)
+        .catch(err => console.error('Failed to load courses:', err))
+        .finally(() => setCoursesLoading(false));
+    } else {
+      setDocuments([]);
+      setCourses([]);
+    }
+  }, [user]);
+
+  const handleCreateDocument = async (title: string, parentId: string | null = null, courseId: string | null = null, lessonId: string | null = null, content: string = '') => {
+    try {
+      const doc = await createDocument(title, parentId, courseId, lessonId, content);
+      setDocuments(prev => [...prev, doc]);
+      navigate({ name: 'document', documentId: doc.id });
+    } catch (err) {
+      console.error('Failed to create document:', err);
+    }
+  };
+
+  const handleCreateDocumentSimple = async (title: string, parentId: string | null = null) => {
+    return handleCreateDocument(title, parentId, null, null, '');
+  };
+
+  const handleUpdateDocument = async (id: string, updates: Partial<AppDocument>) => {
+    try {
+      const updated = await updateDocument(id, updates);
+      setDocuments(prev => prev.map(d => d.id === id ? updated : d));
+    } catch (err) {
+      console.error('Failed to update document:', err);
+    }
+  };
+
+  const handleDeleteDocument = async (id: string) => {
+    try {
+      await deleteDocument(id);
+      setDocuments(prev => prev.filter(d => d.id !== id));
+      navigate({ name: 'dashboard' });
+    } catch (err) {
+      console.error('Failed to delete document:', err);
+    }
+  };
+
+  const handleRenameDocument = async (id: string, title: string) => {
+    try {
+      const updated = await updateDocument(id, { title });
+      setDocuments(prev => prev.map(d => d.id === id ? updated : d));
+    } catch (err) {
+      console.error('Failed to rename document:', err);
+    }
+  };
 
   const navigate = useCallback((v: View) => {
     setView(v);
@@ -32,6 +105,10 @@ function App() {
   useEffect(() => {
     if (user && view.name === 'dashboard') {
       setRefreshKey((k) => k + 1);
+      // Refresh courses when returning to dashboard
+      fetchCourses()
+        .then(setCourses)
+        .catch(err => console.error('Failed to refresh courses:', err));
     }
   }, [user, view.name]);
 
@@ -108,19 +185,32 @@ function App() {
             onOpenCourse={(courseId) => navigate({ name: 'course', courseId })}
           />
         );
-    }
-  };
 
-  const navItems: { label: string; icon: typeof Home; view: View }[] = [
-    { label: 'Library', icon: Home, view: { name: 'dashboard' } },
-    { label: 'New Course', icon: Plus, view: { name: 'generate' } },
-  ];
-
-  const isNavActive = (item: (typeof navItems)[number]) => {
-    if (item.view.name === 'dashboard') {
-      return view.name === 'dashboard' || view.name === 'course' || view.name === 'lesson';
+      case 'document':
+        const currentDoc = documents.find(d => d.id === view.documentId);
+        if (!currentDoc) {
+          return (
+            <div className="text-center py-20">
+              <p className="font-serif text-xl text-ink-600">Document not found.</p>
+              <button 
+                onClick={() => navigate({ name: 'dashboard' })} 
+                className="mt-4 text-sm text-terracotta-600 font-medium"
+              >
+                Back to dashboard
+              </button>
+            </div>
+          );
+        }
+        return (
+          <DocumentEditor
+            document={currentDoc}
+            onSave={(updates) => handleUpdateDocument(currentDoc.id, updates)}
+            onDelete={() => handleDeleteDocument(currentDoc.id)}
+            onBack={() => navigate({ name: 'dashboard' })}
+            allDocuments={documents}
+          />
+        );
     }
-    return view.name === item.view.name;
   };
 
   return (
@@ -129,58 +219,26 @@ function App() {
         <div className="fixed inset-0 bg-ink-900/30 z-30 lg:hidden animate-fade-in-soft" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <aside
-        className={`fixed lg:sticky top-0 left-0 h-screen w-72 bg-cream-100 border-r border-cream-200 z-40 flex flex-col transition-transform duration-300 ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-        }`}
-      >
-        <div className="px-6 pt-7 pb-6 flex items-center justify-between">
-          <button onClick={() => navigate({ name: 'dashboard' })} className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-terracotta-500 flex items-center justify-center shadow-soft">
-              <BookOpen className="w-5 h-5 text-cream-50" strokeWidth={1.5} />
-            </div>
-            <span className="font-serif text-xl text-ink-700 tracking-tight">Athenaeum</span>
-          </button>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-cream-200 text-ink-500"
-          >
-            <X className="w-5 h-5" strokeWidth={1.5} />
-          </button>
-        </div>
-
-        <nav className="flex-1 px-3 py-2 space-y-0.5">
-          {navItems.map((item) => {
-            const active = isNavActive(item);
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.label}
-                onClick={() => navigate(item.view)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                  active ? 'bg-cream-200 text-ink-700' : 'text-warmgray-500 hover:bg-cream-200/60 hover:text-ink-600'
-                }`}
-              >
-                <Icon className="w-[18px] h-[18px]" strokeWidth={1.5} />
-                {item.label}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="px-3 py-3 border-t border-cream-200">
-          <div className="px-3 py-2 mb-1">
-            <p className="text-xs text-warmgray-400 truncate">{user.email}</p>
-          </div>
-          <button
-            onClick={signOut}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-warmgray-500 hover:bg-brick-50 hover:text-brick-500 transition-colors"
-          >
-            <LogOut className="w-[18px] h-[18px]" strokeWidth={1.5} />
-            Sign out
-          </button>
-        </div>
-      </aside>
+      <Sidebar
+        sidebarOpen={sidebarOpen}
+        onCloseSidebar={() => setSidebarOpen(false)}
+        onNavigateDashboard={() => navigate({ name: 'dashboard' })}
+        onNavigateGenerate={() => navigate({ name: 'generate' })}
+        onNavigateCourse={(courseId) => navigate({ name: 'course', courseId })}
+        onNavigateDocument={(documentId) => navigate({ name: 'document', documentId })}
+        activeView={view.name}
+        activeCourseId={view.name === 'course' || view.name === 'lesson' ? view.courseId : undefined}
+        activeDocumentId={view.name === 'document' ? view.documentId : undefined}
+        courses={courses}
+        coursesLoading={coursesLoading}
+        documents={documents}
+        docsLoading={docsLoading}
+        onCreateDocument={handleCreateDocumentSimple}
+        onDeleteDocument={handleDeleteDocument}
+        onRenameDocument={handleRenameDocument}
+        userEmail={user.email || ''}
+        onSignOut={signOut}
+      />
 
       <div className="flex-1 min-w-0 flex flex-col">
         <header className="lg:hidden sticky top-0 z-20 bg-cream-100/95 backdrop-blur-sm border-b border-cream-200 px-4 py-3 flex items-center gap-3">

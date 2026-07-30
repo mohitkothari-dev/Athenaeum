@@ -1,4 +1,4 @@
-import { Sparkles, BookOpen, Layers, ListChecks, PenLine, TrendingUp, ArrowRight, Clock, Target, Lightbulb } from 'lucide-react';
+import { Sparkles, BookOpen, Layers, ListChecks, TrendingUp, ArrowRight, Clock, Target, Lightbulb } from 'lucide-react';
 
 interface LandingPageProps {
   onGetStarted: () => void;
