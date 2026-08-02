@@ -88,6 +88,8 @@ Athenaeum implements a high-quality editorial aesthetic prioritizing readability
 
 ## 🚀 Setup & Installation
 
+**New to the project?** → See the [Quick Start Guide](QUICKSTART.md) for step-by-step instructions.
+
 ### Prerequisites
 * [Node.js](https://nodejs.org) (v18+)
 * [Supabase CLI](https://supabase.com/docs/guides/cli) (for database and edge function management)
@@ -99,23 +101,34 @@ Athenaeum implements a high-quality editorial aesthetic prioritizing readability
    npm install
    ```
 
-2. **Environment Setup**:
-   Create a `.env` file in the root directory:
+2. **Frontend Environment Setup**:
+   Create a `.env` file in the root directory for your frontend:
    ```env
-   VITE_SUPABASE_URL=your_supabase_project_url
+   VITE_SUPABASE_URL=https://your-project.supabase.co
    VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+   VITE_GEMINI_API_KEY=your_gemini_api_key
    ```
+   > ⚠️ Note: `VITE_` prefixed variables are for the frontend only and are publicly accessible in your built application.
 
-3. **Supabase Secrets Configuration**:
-   To set up the AI service, you must bind your Gemini API Key to the Supabase Edge Function secrets:
+3. **Configure Supabase Edge Function Secrets**:
+   Edge functions run on Supabase servers and require separate configuration:
    ```bash
+   # Login to Supabase
    supabase login
-   supabase link --project-ref your_supabase_project_ref
+   
+   # Link your project
+   supabase link --project-ref your_project_ref
+   
+   # Set the Gemini API key (required for course generation)
    supabase secrets set GEMINI_API_KEY=your_gemini_api_key
+   
+   # Verify secrets were set
+   supabase secrets list
    ```
+   
+   > 📚 For detailed edge function setup, see [`supabase/functions/README.md`](supabase/functions/README.md)
 
-4. **Deploying Edge Functions**:
-   Deploy the generator function to your Supabase project:
+4. **Deploy Edge Functions**:
    ```bash
    supabase functions deploy generate-course
    ```
@@ -124,6 +137,13 @@ Athenaeum implements a high-quality editorial aesthetic prioritizing readability
    ```bash
    npm run dev
    ```
+
+### Getting API Keys
+
+- **Supabase Keys**: Dashboard > Settings > API
+  - Use the **anon/public** key for `VITE_SUPABASE_ANON_KEY`
+  - The **service_role** key is auto-injected into edge functions
+- **Gemini API Key**: Get from [Google AI Studio](https://aistudio.google.com/app/apikey)
 
 ---
 
@@ -148,3 +168,59 @@ interface GenerationResponse {
 ```
 
 The serverless function utilizes Deno's native fetch api to call Google's Gemini endpoint with strict response formatting configurations (`responseMimeType: "application/json"`) to ensure correct parsing and prevent format mismatches.
+
+---
+
+## 🐛 Troubleshooting
+
+Having issues with setup or deployment? See the [Troubleshooting Guide](TROUBLESHOOTING.md) for common problems and solutions.
+
+Quick checks:
+```bash
+# Verify frontend environment setup
+npm run verify-setup
+
+# Check Supabase secrets
+supabase secrets list
+
+# View edge function logs
+supabase functions serve generate-course --debug
+```
+
+For detailed edge function configuration, see [`supabase/functions/README.md`](supabase/functions/README.md).
+
+---
+
+## 🔒 Security
+
+Athenaeum follows Supabase's recommended security architecture. See the [Security Guide](SECURITY.md) for details on:
+
+- Why `VITE_SUPABASE_ANON_KEY` is safe to expose
+- How Row Level Security (RLS) protects your data
+- Proper secrets management
+- Security best practices
+
+**Quick Security Note:**  
+The `VITE_SUPABASE_ANON_KEY` in your frontend is **designed** to be public. It's protected by Row Level Security (RLS) policies in your database, ensuring users can only access their own data.
+
+---
+
+## 📁 Project Structure
+
+```
+athenaeum/
+├── src/
+│   ├── components/        # React components
+│   ├── hooks/            # Custom React hooks
+│   ├── lib/              # Utilities & API clients
+│   └── types/            # TypeScript definitions
+├── supabase/
+│   ├── functions/        # Edge Functions (Deno)
+│   │   ├── generate-course/
+│   │   └── README.md     # Edge function setup guide
+│   └── migrations/       # Database schema
+├── scripts/
+│   └── verify-setup.js   # Configuration checker
+├── .env.example          # Environment template
+└── TROUBLESHOOTING.md    # Common issues & solutions
+```
