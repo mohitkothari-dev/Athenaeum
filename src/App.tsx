@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Menu, BookOpen, Plus, LogOut, X, Home } from 'lucide-react';
+import { Menu, BookOpen } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { AuthPage } from '@/components/AuthPage';
 import { LandingPage } from '@/components/LandingPage';
@@ -10,8 +10,20 @@ import { LessonView } from '@/components/LessonView';
 import { ProgressView } from '@/components/ProgressView';
 import { DocumentEditor } from '@/components/DocumentEditor';
 import { Sidebar } from '@/components/Sidebar';
+import { CanvasView } from '@/components/CanvasView';
 import type { AppDocument, Course } from '@/types';
-import { fetchDocuments, createDocument, updateDocument, deleteDocument, fetchCourses } from '@/lib/api';
+import type { CanvasDocument } from '@/types/canvas';
+import {
+  fetchDocuments,
+  createDocument,
+  updateDocument,
+  deleteDocument,
+  fetchCourses,
+  loadCanvases,
+  createCanvas,
+  updateCanvas,
+  deleteCanvas,
+} from '@/lib/api';
 
 type View =
   | { name: 'dashboard' }
@@ -19,7 +31,8 @@ type View =
   | { name: 'course'; courseId: string }
   | { name: 'lesson'; courseId: string; lessonId: string }
   | { name: 'progress' }
-  | { name: 'document'; documentId: string };
+  | { name: 'document'; documentId: string }
+  | { name: 'canvas'; canvasId: string };
 
 function App() {
   const { user, loading, signInWithEmail, signUpWithEmail, signInWithGoogle, signOut } = useAuth();
@@ -32,12 +45,15 @@ function App() {
   const [docsLoading, setDocsLoading] = useState(false);
   const [courses, setCourses] = useState<Course[]>([]);
   const [coursesLoading, setCoursesLoading] = useState(false);
+  const [canvases, setCanvases] = useState<CanvasDocument[]>([]);
+  const [canvasesLoading, setCanvasesLoading] = useState(false);
 
   // Load documents and courses
   useEffect(() => {
     if (user) {
       setDocsLoading(true);
       setCoursesLoading(true);
+      setCanvasesLoading(true);
       
       fetchDocuments()
         .then(setDocuments)
@@ -48,9 +64,15 @@ function App() {
         .then(setCourses)
         .catch(err => console.error('Failed to load courses:', err))
         .finally(() => setCoursesLoading(false));
+
+      loadCanvases()
+        .then(setCanvases)
+        .catch(err => console.error('Failed to load canvases:', err))
+        .finally(() => setCanvasesLoading(false));
     } else {
       setDocuments([]);
       setCourses([]);
+      setCanvases([]);
     }
   }, [user]);
 
@@ -94,6 +116,41 @@ function App() {
     } catch (err) {
       console.error('Failed to rename document:', err);
     }
+  };
+
+  const handleCreateCanvas = async () => {
+    try {
+      const canvas = await createCanvas('Untitled Canvas');
+      setCanvases(prev => [canvas, ...prev]);
+      navigate({ name: 'canvas', canvasId: canvas.id });
+    } catch (err) {
+      console.error('Failed to create canvas:', err);
+    }
+  };
+
+  const handleDeleteCanvas = async (id: string) => {
+    try {
+      await deleteCanvas(id);
+      setCanvases(prev => prev.filter(c => c.id !== id));
+      if (view.name === 'canvas' && view.canvasId === id) {
+        navigate({ name: 'dashboard' });
+      }
+    } catch (err) {
+      console.error('Failed to delete canvas:', err);
+    }
+  };
+
+  const handleRenameCanvas = async (id: string, title: string) => {
+    try {
+      const updated = await updateCanvas(id, { title });
+      setCanvases(prev => prev.map(c => c.id === id ? updated : c));
+    } catch (err) {
+      console.error('Failed to rename canvas:', err);
+    }
+  };
+
+  const handleCanvasUpdated = (updated: CanvasDocument) => {
+    setCanvases(prev => prev.map(canvas => canvas.id === updated.id ? updated : canvas));
   };
 
   const navigate = useCallback((v: View) => {
@@ -186,7 +243,7 @@ function App() {
           />
         );
 
-      case 'document':
+      case 'document': {
         const currentDoc = documents.find(d => d.id === view.documentId);
         if (!currentDoc) {
           return (
@@ -210,6 +267,17 @@ function App() {
             allDocuments={documents}
           />
         );
+
+      }
+
+      case 'canvas':
+        return (
+          <CanvasView
+            canvasId={view.canvasId}
+            onBack={() => navigate({ name: 'dashboard' })}
+            onCanvasUpdated={handleCanvasUpdated}
+          />
+        );
     }
   };
 
@@ -226,16 +294,23 @@ function App() {
         onNavigateGenerate={() => navigate({ name: 'generate' })}
         onNavigateCourse={(courseId) => navigate({ name: 'course', courseId })}
         onNavigateDocument={(documentId) => navigate({ name: 'document', documentId })}
+        onNavigateCanvas={(canvasId) => navigate({ name: 'canvas', canvasId })}
         activeView={view.name}
         activeCourseId={view.name === 'course' || view.name === 'lesson' ? view.courseId : undefined}
         activeDocumentId={view.name === 'document' ? view.documentId : undefined}
+        activeCanvasId={view.name === 'canvas' ? view.canvasId : undefined}
         courses={courses}
         coursesLoading={coursesLoading}
         documents={documents}
         docsLoading={docsLoading}
+        canvases={canvases}
+        canvasesLoading={canvasesLoading}
         onCreateDocument={handleCreateDocumentSimple}
         onDeleteDocument={handleDeleteDocument}
         onRenameDocument={handleRenameDocument}
+        onCreateCanvas={handleCreateCanvas}
+        onDeleteCanvas={handleDeleteCanvas}
+        onRenameCanvas={handleRenameCanvas}
         userEmail={user.email || ''}
         onSignOut={signOut}
       />
@@ -251,13 +326,13 @@ function App() {
           <span className="font-serif text-lg text-ink-700">Athenaeum</span>
         </header>
 
-        <main className="flex-1 px-5 md:px-10 lg:px-14 py-8 md:py-12">{renderContent()}</main>
+        <main className={`flex-1 min-h-0 ${view.name === 'canvas' ? 'p-0' : 'px-5 md:px-10 lg:px-14 py-8 md:py-12'}`}>{renderContent()}</main>
 
-        <footer className="px-5 md:px-10 lg:px-14 py-6 border-t border-cream-200">
+        {view.name !== 'canvas' && <footer className="px-5 md:px-10 lg:px-14 py-6 border-t border-cream-200">
           <p className="text-xs text-warmgray-300 text-center font-serif italic">
             Athenaeum · Your AI learning companion
           </p>
-        </footer>
+        </footer>}
       </div>
     </div>
   );

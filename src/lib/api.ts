@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { Course, Module, Lesson, LessonProgress, QuizResult, FlashcardReview, AppDocument } from '@/types';
+import type { CanvasDocument, CanvasElement } from '@/types/canvas';
 
 function parseLesson(raw: Record<string, unknown>): Lesson {
   return {
@@ -295,4 +296,302 @@ export async function deleteDocument(id: string): Promise<void> {
     .delete()
     .eq('id', id);
   if (error) throw error;
+}
+
+// ============================================
+// Canvas API Functions
+// ============================================
+
+/**
+ * Create a new canvas document
+ * Validates: Requirements 1.1
+ */
+export async function createCanvas(title: string = 'Untitled Canvas'): Promise<CanvasDocument> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const userId = sessionData.session?.user?.id;
+  if (!userId) throw new Error('Not authenticated');
+
+  const { data, error } = await supabase
+    .from('canvas_documents')
+    .insert({
+      title,
+      user_id: userId,
+      icon: '🎨',
+    })
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data as CanvasDocument;
+}
+
+/**
+ * Load all canvas documents for the authenticated user
+ * Validates: Requirements 1.2
+ */
+export async function loadCanvases(): Promise<CanvasDocument[]> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const userId = sessionData.session?.user?.id;
+  if (!userId) throw new Error('Not authenticated');
+
+  const { data, error } = await supabase
+    .from('canvas_documents')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return (data || []) as CanvasDocument[];
+}
+
+/** Load one canvas document. RLS guarantees it belongs to the signed-in user. */
+export async function loadCanvasDocument(id: string): Promise<CanvasDocument> {
+  const { data, error } = await supabase
+    .from('canvas_documents')
+    .select('*')
+    .eq('id', id)
+    .single();
+  if (error) throw error;
+  return data as CanvasDocument;
+}
+
+/**
+ * Update canvas document metadata (title, icon)
+ * Validates: Requirements 1.4
+ */
+export async function updateCanvas(
+  id: string,
+  updates: Partial<Pick<CanvasDocument, 'title' | 'icon' | 'thumbnail'>>
+): Promise<CanvasDocument> {
+  if (updates.title !== undefined && (!updates.title.trim() || updates.title.length > 255)) {
+    throw new Error('Canvas titles must be between 1 and 255 characters.');
+  }
+  const { data, error } = await supabase
+    .from('canvas_documents')
+    .update({
+      ...updates,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data as CanvasDocument;
+}
+
+/**
+ * Delete canvas document and cascade delete all associated elements
+ * Validates: Requirements 1.5
+ */
+export async function deleteCanvas(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('canvas_documents')
+    .delete()
+    .eq('id', id);
+  if (error) throw error;
+}
+
+/**
+ * Save a canvas element (insert or update)
+ * Validates: Requirements 12.1, 12.2
+ */
+export async function saveCanvasElement(element: CanvasElement): Promise<CanvasElement> {
+  // Check if element exists
+  const { data: existing } = await supabase
+    .from('canvas_elements')
+    .select('id')
+    .eq('id', element.id)
+    .maybeSingle();
+
+  if (existing) {
+    // Update existing element
+    const { data, error } = await supabase
+      .from('canvas_elements')
+      .update({
+        type: element.type,
+        position: element.position,
+        color: element.color,
+        stroke_width: element.strokeWidth,
+        type_specific_data: serializeElementData(element),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', element.id)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return deserializeCanvasElement(data);
+  } else {
+    // Insert new element
+    const { data, error } = await supabase
+      .from('canvas_elements')
+      .insert({
+        id: element.id,
+        canvas_id: element.canvas_id,
+        type: element.type,
+        position: element.position,
+        color: element.color,
+        stroke_width: element.strokeWidth,
+        type_specific_data: serializeElementData(element),
+      })
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return deserializeCanvasElement(data);
+  }
+}
+
+/**
+ * Load all canvas elements for a specific canvas
+ * Validates: Requirements 12.3, 12.4
+ */
+export async function loadCanvasElements(canvasId: string): Promise<CanvasElement[]> {
+  const { data, error } = await supabase
+    .from('canvas_elements')
+    .select('*')
+    .eq('canvas_id', canvasId)
+    .order('created_at', { ascending: true });
+
+  if (error) throw error;
+  return (data || []).map(deserializeCanvasElement);
+}
+
+/**
+ * Delete a canvas element
+ * Validates: Requirements 12.4
+ */
+export async function deleteCanvasElement(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('canvas_elements')
+    .delete()
+    .eq('id', id);
+
+  if (error) throw error;
+}
+
+// ============================================
+// Helper Functions for Canvas Element Serialization
+// ============================================
+
+/**
+ * Serialize element-specific data to JSON for database storage
+ */
+function serializeElementData(element: CanvasElement): Record<string, unknown> {
+  switch (element.type) {
+    case 'stroke':
+      return {
+        points: element.points,
+        tool: element.tool,
+      };
+    case 'rectangle':
+      return {
+        width: element.width,
+        height: element.height,
+        filled: element.filled,
+      };
+    case 'circle':
+      return {
+        radius: element.radius,
+        filled: element.filled,
+      };
+    case 'triangle':
+      return {
+        width: element.width,
+        height: element.height,
+        filled: element.filled,
+      };
+    case 'arrow':
+      return {
+        endPoint: element.endPoint,
+        headSize: element.headSize,
+      };
+    case 'line':
+      return {
+        endPoint: element.endPoint,
+      };
+    case 'text':
+      return {
+        content: element.content,
+        fontSize: element.fontSize,
+        fontFamily: element.fontFamily,
+      };
+    default:
+      return {};
+  }
+}
+
+/**
+ * Deserialize canvas element from database record
+ */
+function deserializeCanvasElement(raw: Record<string, unknown>): CanvasElement {
+  const base = {
+    id: raw.id as string,
+    canvas_id: raw.canvas_id as string,
+    type: raw.type as CanvasElement['type'],
+    position: raw.position as { x: number; y: number },
+    color: raw.color as string,
+    strokeWidth: raw.stroke_width as number,
+    created_at: raw.created_at as string,
+    updated_at: raw.updated_at as string,
+  };
+
+  const elementData = raw.type_specific_data as Record<string, unknown>;
+
+  switch (base.type) {
+    case 'stroke':
+      return {
+        ...base,
+        type: 'stroke',
+        points: elementData.points as Array<{ x: number; y: number }>,
+        tool: elementData.tool as 'pen' | 'pencil',
+      };
+    case 'rectangle':
+      return {
+        ...base,
+        type: 'rectangle',
+        width: elementData.width as number,
+        height: elementData.height as number,
+        filled: elementData.filled as boolean,
+      };
+    case 'circle':
+      return {
+        ...base,
+        type: 'circle',
+        radius: elementData.radius as number,
+        filled: elementData.filled as boolean,
+      };
+    case 'triangle':
+      return {
+        ...base,
+        type: 'triangle',
+        width: elementData.width as number,
+        height: elementData.height as number,
+        filled: elementData.filled as boolean,
+      };
+    case 'arrow':
+      return {
+        ...base,
+        type: 'arrow',
+        endPoint: elementData.endPoint as { x: number; y: number },
+        headSize: elementData.headSize as number,
+      };
+    case 'line':
+      return {
+        ...base,
+        type: 'line',
+        endPoint: elementData.endPoint as { x: number; y: number },
+      };
+    case 'text':
+      return {
+        ...base,
+        type: 'text',
+        content: elementData.content as string,
+        fontSize: elementData.fontSize as number,
+        fontFamily: elementData.fontFamily as string,
+      };
+    default:
+      throw new Error(`Unknown element type: ${base.type}`);
+  }
 }
