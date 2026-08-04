@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   BookOpen, Plus, LogOut, X, ChevronRight, ChevronDown,
-  FileText, MoreHorizontal, Trash2, FilePlus, Loader2, Pencil,
+  MoreHorizontal, Trash2, FilePlus, Loader2, Pencil,
 } from 'lucide-react';
 import type { Course, AppDocument } from '@/types';
+import type { CanvasDocument } from '@/types/canvas';
+import CanvasSidebarSection from './CanvasSidebarSection';
 
 // ---------- Types ----------
 
@@ -17,22 +19,31 @@ interface SidebarProps {
   onNavigateGenerate: () => void;
   onNavigateCourse: (courseId: string) => void;
   onNavigateDocument: (documentId: string) => void;
+  onNavigateCanvas: (canvasId: string) => void;
 
   // Active state
   activeView: string;
   activeCourseId?: string;
   activeDocumentId?: string;
+  activeCanvasId?: string;
 
   // Data
   courses: Course[];
   coursesLoading: boolean;
   documents: AppDocument[];
   docsLoading: boolean;
+  canvases: CanvasDocument[];
+  canvasesLoading: boolean;
 
   // Document CRUD
   onCreateDocument: (title: string, parentId?: string | null) => Promise<void>;
   onDeleteDocument: (id: string) => Promise<void>;
   onRenameDocument: (id: string, title: string) => Promise<void>;
+
+  // Canvas CRUD
+  onCreateCanvas: () => Promise<void>;
+  onDeleteCanvas: (canvasId: string) => Promise<void>;
+  onRenameCanvas: (canvasId: string, title: string) => Promise<void>;
 
   // Auth
   userEmail: string;
@@ -78,16 +89,23 @@ export function Sidebar({
   onNavigateGenerate,
   onNavigateCourse,
   onNavigateDocument,
+  onNavigateCanvas,
   activeView,
   activeCourseId,
   activeDocumentId,
+  activeCanvasId,
   courses,
   coursesLoading,
   documents,
   docsLoading,
+  canvases,
+  canvasesLoading,
   onCreateDocument,
   onDeleteDocument,
   onRenameDocument,
+  onCreateCanvas,
+  onDeleteCanvas,
+  onRenameCanvas,
   userEmail,
   onSignOut,
 }: SidebarProps) {
@@ -298,6 +316,20 @@ export function Sidebar({
             </div>
           )}
         </div>
+
+        {/* Divider */}
+        <div className="h-px bg-cream-200 my-2" />
+
+        {/* ── MY CANVASES Section ── */}
+        <CanvasSidebarSection
+          canvases={canvases}
+          canvasesLoading={canvasesLoading}
+          activeCanvasId={activeCanvasId}
+          onNavigateCanvas={onNavigateCanvas}
+          onCreateCanvas={onCreateCanvas}
+          onDeleteCanvas={onDeleteCanvas}
+          onRenameCanvas={onRenameCanvas}
+        />
       </nav>
 
       {/* Footer */}
@@ -316,8 +348,6 @@ export function Sidebar({
     </aside>
   );
 }
-
-// ---------- Document Tree Item ----------
 
 interface DocumentTreeItemProps {
   node: DocTreeNode;

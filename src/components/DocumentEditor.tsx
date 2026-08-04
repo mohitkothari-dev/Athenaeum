@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
   Trash2, ArrowLeft, Eye, Edit3, Image as ImageIcon, 
-  Heading1, Heading2, Heading3, List, CheckSquare, Quote, Code, AlertCircle, Loader2, Sparkles 
+  Heading1, Heading2, Heading3, List, CheckSquare, Quote, Code, AlertCircle, Loader2 
 } from 'lucide-react';
 import { AppDocument } from '@/types';
 

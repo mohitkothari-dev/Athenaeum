@@ -59,10 +59,6 @@ export interface Course {
   updated_at: string;
 }
 
-export interface CourseWithModules extends Course {
-  modules: Module[];
-}
-
 export interface LessonProgress {
   id: string;
   user_id: string;
@@ -95,13 +91,6 @@ export interface FlashcardReview {
   last_reviewed_at: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface UserSession {
-  user: {
-    id: string;
-    email: string;
-  } | null;
 }
 
 export interface AppDocument {
