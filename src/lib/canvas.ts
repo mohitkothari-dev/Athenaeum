@@ -33,12 +33,57 @@ export function getElementBounds(element: CanvasElement): ElementBounds {
     const y = Math.min(element.position.y, element.endPoint.y) - padding;
     return { x, y, width: Math.abs(element.endPoint.x - element.position.x) + padding * 2, height: Math.abs(element.endPoint.y - element.position.y) + padding * 2 };
   }
-  // Text dimensions are estimated in the same way the selection UI does.
-  return { x: element.position.x - padding, y: element.position.y - padding, width: Math.max(12, element.content.length * element.fontSize * 0.58) + padding * 2, height: element.fontSize * 1.25 + padding * 2 };
+  // Text dimensions calculation with multiline support
+  const lines = element.content.split('\n');
+  const maxLineLength = Math.max(1, ...lines.map(l => l.length));
+  const textWidth = Math.max(20, maxLineLength * element.fontSize * 0.58);
+  const textHeight = Math.max(element.fontSize, lines.length * element.fontSize * 1.3);
+  return { x: element.position.x - padding, y: element.position.y - padding, width: textWidth + padding * 2, height: textHeight + padding * 2 };
 }
 
 function intersectsBounds(first: ElementBounds, second: ElementBounds): boolean {
   return first.x <= second.x + second.width && first.x + first.width >= second.x && first.y <= second.y + second.height && first.y + first.height >= second.y;
+}
+
+export function moveElement(element: CanvasElement, deltaX: number, deltaY: number): CanvasElement {
+  const updated_at = new Date().toISOString();
+  if (element.type === 'stroke') {
+    return {
+      ...element,
+      position: { x: element.position.x + deltaX, y: element.position.y + deltaY },
+      points: element.points.map(p => ({ x: p.x + deltaX, y: p.y + deltaY })),
+      updated_at,
+    };
+  }
+  if (element.type === 'arrow' || element.type === 'line') {
+    return {
+      ...element,
+      position: { x: element.position.x + deltaX, y: element.position.y + deltaY },
+      endPoint: { x: element.endPoint.x + deltaX, y: element.endPoint.y + deltaY },
+      updated_at,
+    };
+  }
+  return {
+    ...element,
+    position: { x: element.position.x + deltaX, y: element.position.y + deltaY },
+    updated_at,
+  };
+}
+
+export function getElementsInRect(
+  rect: { x: number; y: number; width: number; height: number },
+  elements: CanvasElement[]
+): CanvasElement[] {
+  const normalizedRect = {
+    x: Math.min(rect.x, rect.x + rect.width),
+    y: Math.min(rect.y, rect.y + rect.height),
+    width: Math.abs(rect.width),
+    height: Math.abs(rect.height),
+  };
+  return elements.filter(element => {
+    const bounds = getElementBounds(element);
+    return intersectsBounds(bounds, normalizedRect);
+  });
 }
 
 export function pointHitsElement(point: Point, element: CanvasElement, tolerance = 6): boolean {
