@@ -11,7 +11,7 @@ interface UseCanvasEngineProps {
 }
 
 export interface CanvasEngine {
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  canvasRef: React.RefObject<HTMLCanvasElement>;
   viewport: ViewportTransform;
   setViewport: React.Dispatch<React.SetStateAction<ViewportTransform>>;
   screenToCanvas: (clientX: number, clientY: number) => Point | null;

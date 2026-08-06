@@ -256,7 +256,7 @@ describe('Canvas API Functions', () => {
           }),
         };
       });
-      vi.mocked(supabase.from).mockImplementation(mockFrom);
+      vi.mocked(supabase.from).mockImplementation(mockFrom as any);
 
       await deleteCanvas(mockCanvasId);
 
@@ -280,7 +280,7 @@ describe('Canvas API Functions', () => {
           }),
         };
       });
-      vi.mocked(supabase.from).mockImplementation(mockFrom);
+      vi.mocked(supabase.from).mockImplementation(mockFrom as any);
 
       await expect(deleteCanvas(mockCanvasId)).rejects.toThrow('Delete failed');
     });
