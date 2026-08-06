@@ -1,12 +1,12 @@
-// Add this test file: src/test/canvas-transformations.test.ts
 import fc from 'fast-check';
 import type { ViewportTransform, Point } from '@/types/canvas';
+import { screenToWorld, worldToScreen } from '../lib/canvas';
 
 describe('Property: Viewport Transformation Consistency', () => {
   // Property 2: Viewport Transformation Consistency
   // Validates: Requirements 10.5
   // Test that screen → canvas → screen yields original coordinates within 0.01 pixel tolerance
-  
+
   test('screenToCanvas then canvasToScreen should return original screen coordinates', () => {
     fc.assert(fc.property(
       // Generate random viewport states
@@ -20,19 +20,16 @@ describe('Property: Viewport Transformation Consistency', () => {
         screenX: fc.integer({ min: -2000, max: 2000 }),
         screenY: fc.integer({ min: -2000, max: 2000 })
       }),
-      (viewport, screenCoords) => {
-        // Import the transformation functions
-        const { screenToCanvas, canvasToScreen } = require('@/hooks/useCanvasEngine');
-        
+      (viewport: ViewportTransform, screenCoords: { screenX: number; screenY: number }) => {
         // Apply transformations
-        const canvasPoint: Point = screenToCanvas(screenCoords.screenX, screenCoords.screenY);
-        const resultScreenCoords: Point = canvasToScreen(canvasPoint.x, canvasPoint.y);
-        
+        const canvasPoint: Point = screenToWorld({ x: screenCoords.screenX, y: screenCoords.screenY }, viewport);
+        const resultScreenCoords: Point = worldToScreen(canvasPoint, viewport);
+
         // Verify the transformation is consistent within tolerance
         const tolerance = 0.01;
         const xMatch = Math.abs(resultScreenCoords.x - screenCoords.screenX) <= tolerance;
         const yMatch = Math.abs(resultScreenCoords.y - screenCoords.screenY) <= tolerance;
-        
+
         return xMatch && yMatch;
       }
     ), { numRuns: 100 });

@@ -385,6 +385,12 @@ export async function updateCanvas(
  * Validates: Requirements 1.5
  */
 export async function deleteCanvas(id: string): Promise<void> {
+  const { error: elementsError } = await supabase
+    .from('canvas_elements')
+    .delete()
+    .eq('canvas_id', id);
+  if (elementsError) throw elementsError;
+
   const { error } = await supabase
     .from('canvas_documents')
     .delete()
@@ -536,8 +542,7 @@ function deserializeCanvasElement(raw: Record<string, unknown>): CanvasElement {
     created_at: raw.created_at as string,
     updated_at: raw.updated_at as string,
   };
-
-  const elementData = raw.type_specific_data as Record<string, unknown>;
+  const elementData = ((raw.type_specific_data || raw.element_data) as Record<string, unknown>) || {};
 
   switch (base.type) {
     case 'stroke':

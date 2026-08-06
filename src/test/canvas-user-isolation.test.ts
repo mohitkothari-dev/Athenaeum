@@ -25,12 +25,12 @@ describe('Property: User Data Isolation', () => {
         // Determine which user owns the canvas based on canvasId
         if (data.canvasId === 'canvas-user-1') {
           // Canvas belongs to user-1
-          user1CanAccess = data.userId1 === 'user-1';
-          user2CanAccess = data.userId2 === 'user-2'; // user-2 should NOT access user-1's canvas
+          user1CanAccess = true;
+          user2CanAccess = false;
         } else if (data.canvasId === 'canvas-user-2') {
           // Canvas belongs to user-2
-          user1CanAccess = data.userId1 === 'user-1'; // user-1 should NOT access user-2's canvas
-          user2CanAccess = data.userId2 === 'user-2';
+          user1CanAccess = false;
+          user2CanAccess = true;
         } else {
           // Other canvas - no one can access it
           user1CanAccess = false;

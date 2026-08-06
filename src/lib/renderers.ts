@@ -109,7 +109,11 @@ export function renderText(ctx: CanvasRenderingContext2D, element: TextElement):
   ctx.font = `${element.fontSize}px ${element.fontFamily}`;
   ctx.fillStyle = element.color;
   ctx.textBaseline = 'top';
-  ctx.fillText(element.content, element.position.x, element.position.y);
+  const lines = element.content.split('\n');
+  const lineHeight = element.fontSize * 1.3;
+  lines.forEach((line, index) => {
+    ctx.fillText(line, element.position.x, element.position.y + index * lineHeight);
+  });
   ctx.restore();
 }
 
