@@ -43,6 +43,10 @@ interface DragState {
 
 const shapeTools = new Set<CanvasTool>(['rectangle', 'circle', 'triangle', 'arrow', 'line']);
 
+function isShapeTool(tool: CanvasTool): tool is Extract<CanvasTool, 'rectangle' | 'circle' | 'triangle' | 'arrow' | 'line'> {
+  return shapeTools.has(tool);
+}
+
 export function CanvasView({ canvasId, onBack, onCanvasUpdated }: CanvasViewProps) {
   const [canvas, setCanvas] = useState<CanvasDocument | null>(null);
   const [elements, setElements] = useState<CanvasElement[]>([]);
@@ -396,7 +400,7 @@ export function CanvasView({ canvasId, onBack, onCanvasUpdated }: CanvasViewProp
         dragRef.current = { clientX: event.clientX, clientY: event.clientY };
       } else if (activeTool === 'pen' || activeTool === 'pencil') {
         dragRef.current = { clientX: event.clientX, clientY: event.clientY, stroke: [point] };
-      } else if (shapeTools.has(activeTool)) {
+      } else if (isShapeTool(activeTool)) {
         dragRef.current = { clientX: event.clientX, clientY: event.clientY, start: point };
       } else if (activeTool === 'eraser') {
         void eraseAt(point);
@@ -455,7 +459,7 @@ export function CanvasView({ canvasId, onBack, onCanvasUpdated }: CanvasViewProp
           const now = new Date().toISOString();
           setDraft({ id: 'draft-stroke', canvas_id: canvasId, type: 'stroke', position: drag.stroke[0], points: drag.stroke, tool: activeTool, color: activeColor, strokeWidth, created_at: now, updated_at: now });
         }
-      } else if (shapeTools.has(activeTool) && drag.start) {
+      } else if (isShapeTool(activeTool) && drag.start) {
         setDraft(createShapeElement(activeTool, canvasId, drag.start, point, activeColor, strokeWidth));
       } else if (activeTool === 'select') {
         if (drag.isMoving && drag.lastPoint && selection.length > 0) {
@@ -485,7 +489,7 @@ export function CanvasView({ canvasId, onBack, onCanvasUpdated }: CanvasViewProp
       if ((activeTool === 'pen' || activeTool === 'pencil') && drag?.stroke && drag.stroke.length >= 2) {
         const now = new Date().toISOString();
         void persistElement({ id: createCanvasId(), canvas_id: canvasId, type: 'stroke', position: drag.stroke[0], points: drag.stroke, tool: activeTool, color: activeColor, strokeWidth, created_at: now, updated_at: now });
-      } else if (shapeTools.has(activeTool) && draft) {
+      } else if (isShapeTool(activeTool) && draft) {
         void persistElement(draft);
       } else if (activeTool === 'select' && drag) {
         if (drag.isMoving && drag.moved && selection.length > 0) {
