@@ -4,6 +4,7 @@ import type { CanvasDocument, CanvasElement, CanvasTool, Point, TextElement, Vie
 import {
   createCanvasId,
   createShapeElement,
+  createStrokeElement,
   generateThumbnail,
   getElementBounds,
   getElementsInRect,
@@ -168,7 +169,6 @@ export function CanvasView({ canvasId, onBack, onCanvasUpdated }: CanvasViewProp
 
   // Focus textarea only when the editor first opens (position or editingId changes),
   // NOT on every keystroke — otherwise select() would replace all text each time the user types.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (textEditor && textInputRef.current) {
       textInputRef.current.focus();
@@ -456,8 +456,7 @@ export function CanvasView({ canvasId, onBack, onCanvasUpdated }: CanvasViewProp
         const previous = drag.stroke[drag.stroke.length - 1];
         if (Math.hypot(point.x - previous.x, point.y - previous.y) >= 1.5) {
           drag.stroke = [...drag.stroke, point];
-          const now = new Date().toISOString();
-          setDraft({ id: 'draft-stroke', canvas_id: canvasId, type: 'stroke', position: drag.stroke[0], points: drag.stroke, tool: activeTool, color: activeColor, strokeWidth, created_at: now, updated_at: now });
+          setDraft(createStrokeElement(drag.stroke, activeTool, canvasId, activeColor, strokeWidth));
         }
       } else if (isShapeTool(activeTool) && drag.start) {
         setDraft(createShapeElement(activeTool, canvasId, drag.start, point, activeColor, strokeWidth));
@@ -487,8 +486,7 @@ export function CanvasView({ canvasId, onBack, onCanvasUpdated }: CanvasViewProp
     try {
       const drag = dragRef.current;
       if ((activeTool === 'pen' || activeTool === 'pencil') && drag?.stroke && drag.stroke.length >= 2) {
-        const now = new Date().toISOString();
-        void persistElement({ id: createCanvasId(), canvas_id: canvasId, type: 'stroke', position: drag.stroke[0], points: drag.stroke, tool: activeTool, color: activeColor, strokeWidth, created_at: now, updated_at: now });
+        void persistElement(createStrokeElement(drag.stroke, activeTool, canvasId, activeColor, strokeWidth));
       } else if (isShapeTool(activeTool) && draft) {
         void persistElement(draft);
       } else if (activeTool === 'select' && drag) {

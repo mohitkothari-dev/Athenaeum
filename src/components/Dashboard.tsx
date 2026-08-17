@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, Clock, CheckCircle, BookOpen, Loader2, Trash2, ArrowRight, GraduationCap } from 'lucide-react';
 import type { Course } from '@/types';
-import { fetchCourses, deleteCourse } from '@/lib/api';
-import { supabase } from '@/lib/supabase';
+import { fetchCourses, deleteCourse, fetchCourseProgress } from '@/lib/api';
+import { COURSE_COLOR_GRADIENTS } from '@/lib/courseColors';
 
 interface DashboardProps {
-  userId: string;
   onOpenCourse: (courseId: string) => void;
   onGenerate: () => void;
   onProgress: () => void;
@@ -19,7 +18,7 @@ interface CourseProgress {
   percent: number;
 }
 
-export function Dashboard({ userId, onOpenCourse, onGenerate, onProgress, refreshKey }: DashboardProps) {
+export function Dashboard({ onOpenCourse, onGenerate, onProgress, refreshKey }: DashboardProps) {
   const [courses, setCourses] = useState<Course[]>([]);
   const [progressData, setProgressData] = useState<CourseProgress[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,39 +29,19 @@ export function Dashboard({ userId, onOpenCourse, onGenerate, onProgress, refres
     try {
       const data = await fetchCourses();
       setCourses(data);
-      const progressMap = new Map<string, { total: number; completed: number; percent: number }>();
-      for (const course of data) {
-        const { count: total } = await supabase
-          .from('lessons')
-          .select('*', { count: 'exact', head: true })
-          .eq('course_id', course.id);
-        const { count: completed } = await supabase
-          .from('lesson_progress')
-          .select('*', { count: 'exact', head: true })
-          .eq('course_id', course.id)
-          .eq('user_id', userId)
-          .eq('status', 'completed');
-        const t = total ?? 0;
-        const c = completed ?? 0;
-        progressMap.set(course.id, {
-          total: t,
-          completed: c,
-          percent: t > 0 ? Math.round((c / t) * 100) : 0,
-        });
-      }
-      const enriched: CourseProgress[] = data.map((course) => ({
-        course,
-        totalLessons: progressMap.get(course.id)?.total ?? 0,
-        completedLessons: progressMap.get(course.id)?.completed ?? 0,
-        percent: progressMap.get(course.id)?.percent ?? 0,
-      }));
+      const enriched: CourseProgress[] = await Promise.all(
+        data.map(async (course) => {
+          const { totalLessons, completedLessons, percent } = await fetchCourseProgress(course.id);
+          return { course, totalLessons, completedLessons, percent };
+        }),
+      );
       setProgressData(enriched);
     } catch (err) {
       console.error('Failed to load dashboard:', err);
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -77,14 +56,6 @@ export function Dashboard({ userId, onOpenCourse, onGenerate, onProgress, refres
   const inProgress = progressData.filter((p) => p.completedLessons > 0 && p.percent < 100);
   const completed = progressData.filter((p) => p.percent === 100 && p.totalLessons > 0);
   const notStarted = progressData.filter((p) => p.completedLessons === 0);
-
-  const colorMap: Record<string, string> = {
-    terracotta: 'from-terracotta-300 to-terracotta-500',
-    sage: 'from-sage-300 to-sage-500',
-    gold: 'from-gold-200 to-gold-400',
-    brick: 'from-brick-300 to-brick-500',
-    ink: 'from-ink-400 to-ink-700',
-  };
 
   return (
     <div className="max-w-5xl mx-auto animate-fade-in">
@@ -148,7 +119,7 @@ export function Dashboard({ userId, onOpenCourse, onGenerate, onProgress, refres
                   <CourseCard
                     key={p.course.id}
                     progress={p}
-                    colorClass={colorMap[p.course.cover_color] || colorMap.terracotta}
+                    colorClass={COURSE_COLOR_GRADIENTS[p.course.cover_color] || COURSE_COLOR_GRADIENTS.terracotta}
                     onOpen={() => onOpenCourse(p.course.id)}
                     onDelete={() => setConfirmDelete(p.course.id)}
                     confirmDelete={confirmDelete === p.course.id}
@@ -171,7 +142,7 @@ export function Dashboard({ userId, onOpenCourse, onGenerate, onProgress, refres
                   <CourseCard
                     key={p.course.id}
                     progress={p}
-                    colorClass={colorMap[p.course.cover_color] || colorMap.terracotta}
+                    colorClass={COURSE_COLOR_GRADIENTS[p.course.cover_color] || COURSE_COLOR_GRADIENTS.terracotta}
                     onOpen={() => onOpenCourse(p.course.id)}
                     onDelete={() => setConfirmDelete(p.course.id)}
                     confirmDelete={confirmDelete === p.course.id}
@@ -194,7 +165,7 @@ export function Dashboard({ userId, onOpenCourse, onGenerate, onProgress, refres
                   <CourseCard
                     key={p.course.id}
                     progress={p}
-                    colorClass={colorMap[p.course.cover_color] || colorMap.terracotta}
+                    colorClass={COURSE_COLOR_GRADIENTS[p.course.cover_color] || COURSE_COLOR_GRADIENTS.terracotta}
                     onOpen={() => onOpenCourse(p.course.id)}
                     onDelete={() => setConfirmDelete(p.course.id)}
                     confirmDelete={confirmDelete === p.course.id}

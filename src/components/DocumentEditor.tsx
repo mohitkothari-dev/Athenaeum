@@ -34,7 +34,6 @@ export function DocumentEditor({ document, onSave, onDelete, onBack, allDocument
   const [isSaving, setIsSaving] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showCoverPicker, setShowCoverPicker] = useState(false);
-  const [showAiDrawer, setShowAiDrawer] = useState(false);
   
   // Slash Commands State
   const [slashQuery, setSlashQuery] = useState<string | null>(null);

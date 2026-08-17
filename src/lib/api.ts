@@ -84,6 +84,31 @@ export async function fetchLessonProgress(
   return map;
 }
 
+export interface CourseProgress {
+  totalLessons: number;
+  completedLessons: number;
+  inProgressLessons: number;
+  percent: number;
+}
+
+export async function fetchCourseProgress(courseId: string): Promise<CourseProgress> {
+  const { count: total } = await supabase
+    .from('lessons')
+    .select('*', { count: 'exact', head: true })
+    .eq('course_id', courseId);
+
+  const progress = await fetchLessonProgress(courseId);
+  const completedLessons = Array.from(progress.values()).filter((p) => p.status === 'completed').length;
+  const inProgressLessons = Array.from(progress.values()).filter((p) => p.status === 'in_progress').length;
+  const t = total ?? 0;
+  return {
+    totalLessons: t,
+    completedLessons,
+    inProgressLessons,
+    percent: t > 0 ? Math.round((completedLessons / t) * 100) : 0,
+  };
+}
+
 export async function updateLessonProgress(
   lessonId: string,
   courseId: string,
@@ -136,21 +161,6 @@ export async function saveQuizResult(
     score,
     total,
   });
-}
-
-export async function fetchFlashcardReviews(
-  courseId: string,
-): Promise<Map<string, FlashcardReview>> {
-  const { data, error } = await supabase
-    .from('flashcard_reviews')
-    .select('*')
-    .eq('course_id', courseId);
-  if (error) throw error;
-  const map = new Map<string, FlashcardReview>();
-  (data || []).forEach((r: FlashcardReview) =>
-    map.set(`${r.lesson_id}-${r.flashcard_index}`, r),
-  );
-  return map;
 }
 
 export async function recordFlashcardReview(
@@ -243,6 +253,13 @@ export async function fetchDocuments(): Promise<AppDocument[]> {
   return (data || []) as AppDocument[];
 }
 
+async function requireUserId(): Promise<string> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const userId = sessionData.session?.user?.id;
+  if (!userId) throw new Error('Not authenticated');
+  return userId;
+}
+
 export async function createDocument(
   title: string,
   parentId: string | null = null,
@@ -250,9 +267,7 @@ export async function createDocument(
   lessonId: string | null = null,
   content: string = '',
 ): Promise<AppDocument> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const userId = sessionData.session?.user?.id;
-  if (!userId) throw new Error('Not authenticated');
+  const userId = await requireUserId();
 
   const { data, error } = await supabase
     .from('documents')
@@ -307,9 +322,7 @@ export async function deleteDocument(id: string): Promise<void> {
  * Validates: Requirements 1.1
  */
 export async function createCanvas(title: string = 'Untitled Canvas'): Promise<CanvasDocument> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const userId = sessionData.session?.user?.id;
-  if (!userId) throw new Error('Not authenticated');
+  const userId = await requireUserId();
 
   const { data, error } = await supabase
     .from('canvas_documents')
@@ -330,9 +343,7 @@ export async function createCanvas(title: string = 'Untitled Canvas'): Promise<C
  * Validates: Requirements 1.2
  */
 export async function loadCanvases(): Promise<CanvasDocument[]> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const userId = sessionData.session?.user?.id;
-  if (!userId) throw new Error('Not authenticated');
+  const userId = await requireUserId();
 
   const { data, error } = await supabase
     .from('canvas_documents')

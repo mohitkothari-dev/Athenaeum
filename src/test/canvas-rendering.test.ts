@@ -4,12 +4,8 @@ import {
   renderStroke,
   renderRectangle,
   renderCircle,
-  renderTriangle,
-  renderArrow,
-  renderLine,
-  renderText,
 } from '@/lib/renderers';
-import type { StrokeElement, RectangleElement, CircleElement, TriangleElement, ArrowElement, LineElement, TextElement } from '@/types/canvas';
+import type { StrokeElement, RectangleElement, CircleElement } from '@/types/canvas';
 
 describe('Element Rendering Functions', () => {
   let mockCtx: any;

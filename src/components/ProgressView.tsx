@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { CheckCircle, Clock, Award, Loader2, ArrowRight, Flame } from 'lucide-react';
 import type { Course, QuizResult } from '@/types';
-import { fetchCourses, fetchLessonProgress, fetchQuizResults } from '@/lib/api';
+import { fetchCourses, fetchCourseProgress, fetchQuizResults } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
 interface ProgressViewProps {
@@ -35,21 +35,13 @@ export function ProgressView({ userId, onBack, onOpenCourse }: ProgressViewProps
       let allQuizResults: QuizResult[] = [];
 
       for (const course of courseData) {
-        const progress = await fetchLessonProgress(course.id);
-        const { count: total } = await supabase
-          .from('lessons')
-          .select('*', { count: 'exact', head: true })
-          .eq('course_id', course.id);
-
-        const completed = Array.from(progress.values()).filter((p) => p.status === 'completed').length;
-        const inProgress = Array.from(progress.values()).filter((p) => p.status === 'in_progress').length;
-        const t = total ?? 0;
+        const { totalLessons, completedLessons, inProgressLessons, percent } = await fetchCourseProgress(course.id);
         stats.push({
           course,
-          totalLessons: t,
-          completedLessons: completed,
-          inProgressLessons: inProgress,
-          percent: t > 0 ? Math.round((completed / t) * 100) : 0,
+          totalLessons,
+          completedLessons,
+          inProgressLessons,
+          percent,
         });
 
         const quizzes = await fetchQuizResults(course.id);
