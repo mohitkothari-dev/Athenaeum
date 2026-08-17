@@ -199,7 +199,6 @@ function App() {
       case 'dashboard':
         return (
           <Dashboard
-            userId={user.id}
             onOpenCourse={(courseId) => navigate({ name: 'course', courseId })}
             onGenerate={() => navigate({ name: 'generate' })}
             onProgress={() => navigate({ name: 'progress' })}

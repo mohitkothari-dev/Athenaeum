@@ -1,4 +1,4 @@
-import type { CanvasElement, CanvasTool, Point, ViewportTransform } from '@/types/canvas';
+import type { CanvasElement, CanvasTool, Point, StrokeElement, ViewportTransform } from '@/types/canvas';
 import { renderElement } from '@/lib/renderers';
 
 interface ElementBounds { x: number; y: number; width: number; height: number }
@@ -110,6 +110,22 @@ export function validateCanvasElement(element: CanvasElement): string | null {
   if ((element.type === 'arrow' || element.type === 'line') && !validPoint(element.endPoint)) return 'Line endpoint must be finite.';
   if (element.type === 'text' && (!element.content.trim() || element.fontSize < 8 || element.fontSize > 72)) return 'Text must be non-empty and 8–72px.';
   return null;
+}
+
+export function createStrokeElement(points: Point[], tool: 'pen' | 'pencil', canvasId: string, color: string, strokeWidth: number): StrokeElement {
+  const now = new Date().toISOString();
+  return {
+    id: createCanvasId(),
+    canvas_id: canvasId,
+    type: 'stroke',
+    position: points[0],
+    points,
+    tool,
+    color,
+    strokeWidth,
+    created_at: now,
+    updated_at: now,
+  };
 }
 
 export function createShapeElement(tool: Extract<CanvasTool, 'rectangle' | 'circle' | 'triangle' | 'arrow' | 'line'>, canvasId: string, start: Point, end: Point, color: string, strokeWidth: number): CanvasElement | null {

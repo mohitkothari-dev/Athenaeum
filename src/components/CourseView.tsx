@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, Clock, CheckCircle, ArrowRight, BookOpen, Loader2 } from 'lucide-react';
 import type { Course, Module, LessonProgress } from '@/types';
 import { fetchCourseWithModules, fetchLessonProgress } from '@/lib/api';
+import { COURSE_COLOR_GRADIENTS } from '@/lib/courseColors';
 
 interface CourseViewProps {
   courseId: string;
@@ -38,14 +39,6 @@ export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) 
   const completedLessons = Array.from(progressMap.values()).filter((p) => p.status === 'completed').length;
   const percent = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
 
-  const colorMap: Record<string, string> = {
-    terracotta: 'from-terracotta-300 to-terracotta-500',
-    sage: 'from-sage-300 to-sage-500',
-    gold: 'from-gold-200 to-gold-400',
-    brick: 'from-brick-300 to-brick-500',
-    ink: 'from-ink-400 to-ink-700',
-  };
-
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-32">
@@ -76,7 +69,7 @@ export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) 
         Back to library
       </button>
 
-      <div className={`h-2 rounded-full bg-gradient-to-r ${colorMap[course.cover_color] || colorMap.terracotta} mb-6`} />
+      <div className={`h-2 rounded-full bg-gradient-to-r ${COURSE_COLOR_GRADIENTS[course.cover_color] || COURSE_COLOR_GRADIENTS.terracotta} mb-6`} />
 
       <h1 className="font-serif text-3xl md:text-4xl text-ink-700 leading-tight mb-2">{course.title}</h1>
       <p className="reading-text !text-[1.0625rem] !leading-[1.75] text-warmgray-500 mb-6">{course.description}</p>

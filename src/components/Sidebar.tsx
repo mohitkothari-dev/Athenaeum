@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   BookOpen, Plus, LogOut, X, ChevronRight, ChevronDown,
   MoreHorizontal, Trash2, FilePlus, Loader2, Pencil,
@@ -6,6 +6,7 @@ import {
 import type { Course, AppDocument } from '@/types';
 import type { CanvasDocument } from '@/types/canvas';
 import CanvasSidebarSection from './CanvasSidebarSection';
+import { COURSE_COLOR_DOTS } from '@/lib/courseColors';
 
 // ---------- Types ----------
 
@@ -114,7 +115,6 @@ export function Sidebar({
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
   const [creatingPage, setCreatingPage] = useState(false);
 
-  const isLibraryActive = activeView === 'dashboard' || activeView === 'course' || activeView === 'lesson' || activeView === 'progress';
   const docTree = buildDocTree(documents);
 
   const toggleDocExpanded = (docId: string) => {
@@ -207,13 +207,6 @@ export function Sidebar({
               ) : (
                 courses.map((course) => {
                   const isActive = activeCourseId === course.id && (activeView === 'course' || activeView === 'lesson');
-                  const colorDot: Record<string, string> = {
-                    terracotta: 'bg-terracotta-400',
-                    sage: 'bg-sage-400',
-                    gold: 'bg-gold-400',
-                    brick: 'bg-brick-400',
-                    ink: 'bg-ink-500',
-                  };
                   return (
                     <button
                       key={course.id}
@@ -225,7 +218,7 @@ export function Sidebar({
                       }`}
                       title={course.title}
                     >
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${colorDot[course.cover_color] || 'bg-terracotta-400'}`} />
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${COURSE_COLOR_DOTS[course.cover_color] || COURSE_COLOR_DOTS.terracotta}`} />
                       <span className="truncate">{course.title}</span>
                     </button>
                   );

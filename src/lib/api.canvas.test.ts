@@ -249,7 +249,7 @@ describe('Canvas API Functions', () => {
 
   describe('deleteCanvas', () => {
     it('should delete canvas and cascade delete elements', async () => {
-      const mockFrom = vi.fn((table: string) => {
+      const mockFrom = vi.fn(() => {
         return {
           delete: vi.fn().mockReturnValue({
             eq: vi.fn().mockResolvedValue({ data: null, error: null }),
