@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { CheckCircle, Clock, Award, Loader2, ArrowRight, Flame } from 'lucide-react';
 import type { Course, QuizResult } from '@/types';
-import { fetchCourses, fetchCourseProgress, fetchQuizResults } from '@/lib/api';
+import { fetchCourseProgress, fetchQuizResults } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
 interface ProgressViewProps {
   userId: string;
+  courses: Course[];
   onBack: () => void;
   onOpenCourse: (courseId: string) => void;
 }
@@ -18,8 +19,7 @@ interface CourseStat {
   percent: number;
 }
 
-export function ProgressView({ userId, onBack, onOpenCourse }: ProgressViewProps) {
-  const [courses, setCourses] = useState<Course[]>([]);
+export function ProgressView({ userId, courses, onBack, onOpenCourse }: ProgressViewProps) {
   const [courseStats, setCourseStats] = useState<CourseStat[]>([]);
   const [quizResults, setQuizResults] = useState<QuizResult[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,13 +28,10 @@ export function ProgressView({ userId, onBack, onOpenCourse }: ProgressViewProps
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const courseData = await fetchCourses();
-      setCourses(courseData);
-
       const stats: CourseStat[] = [];
       let allQuizResults: QuizResult[] = [];
 
-      for (const course of courseData) {
+      for (const course of courses) {
         const { totalLessons, completedLessons, inProgressLessons, percent } = await fetchCourseProgress(course.id);
         stats.push({
           course,
@@ -83,7 +80,7 @@ export function ProgressView({ userId, onBack, onOpenCourse }: ProgressViewProps
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [courses, userId]);
 
   useEffect(() => {
     load();

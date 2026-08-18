@@ -13,7 +13,12 @@ export function useAuth() {
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+      setUser((prev) => {
+        const next = session?.user ?? null;
+        if (!next) return null;
+        if (prev && prev.id === next.id) return prev;
+        return next;
+      });
       setLoading(false);
     });
 
