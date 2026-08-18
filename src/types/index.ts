@@ -106,3 +106,10 @@ export interface AppDocument {
   created_at: string;
   updated_at: string;
 }
+
+export interface CourseWithProgress {
+  course: Course;
+  totalLessons: number;
+  completedLessons: number;
+  percent: number;
+}

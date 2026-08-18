@@ -11,7 +11,7 @@ import { ProgressView } from '@/components/ProgressView';
 import { DocumentEditor } from '@/components/DocumentEditor';
 import { Sidebar } from '@/components/Sidebar';
 import { CanvasView } from '@/components/CanvasView';
-import type { AppDocument, Course } from '@/types';
+import type { AppDocument, Course, CourseWithProgress } from '@/types';
 import type { CanvasDocument } from '@/types/canvas';
 import {
   fetchDocuments,
@@ -19,6 +19,8 @@ import {
   updateDocument,
   deleteDocument,
   fetchCourses,
+  fetchCourseProgress,
+  deleteCourse,
   loadCanvases,
   createCanvas,
   updateCanvas,
@@ -36,9 +38,9 @@ type View =
 
 function App() {
   const { user, loading, signInWithEmail, signUpWithEmail, signInWithGoogle, signOut } = useAuth();
+  const userId = user?.id;
   const [view, setView] = useState<View>({ name: 'dashboard' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
   const [showAuth, setShowAuth] = useState(false);
 
   const [documents, setDocuments] = useState<AppDocument[]>([]);
@@ -48,9 +50,13 @@ function App() {
   const [canvases, setCanvases] = useState<CanvasDocument[]>([]);
   const [canvasesLoading, setCanvasesLoading] = useState(false);
 
-  // Load documents and courses
+  const [dashboardProgress, setDashboardProgress] = useState<CourseWithProgress[]>([]);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardHasLoaded, setDashboardHasLoaded] = useState(false);
+
+  // Load documents, courses, and canvases
   useEffect(() => {
-    if (user) {
+    if (userId) {
       setDocsLoading(true);
       setCoursesLoading(true);
       setCanvasesLoading(true);
@@ -73,8 +79,28 @@ function App() {
       setDocuments([]);
       setCourses([]);
       setCanvases([]);
+      setDashboardProgress([]);
+      setDashboardHasLoaded(false);
     }
-  }, [user]);
+  }, [userId]);
+
+  const loadDashboardProgress = useCallback(async (courseList: Course[]) => {
+    setDashboardLoading(true);
+    try {
+      const enriched: CourseWithProgress[] = await Promise.all(
+        courseList.map(async (course) => {
+          const { totalLessons, completedLessons, percent } = await fetchCourseProgress(course.id);
+          return { course, totalLessons, completedLessons, percent };
+        }),
+      );
+      setDashboardProgress(enriched);
+    } catch (err) {
+      console.error('Failed to load dashboard progress:', err);
+    } finally {
+      setDashboardHasLoaded(true);
+      setDashboardLoading(false);
+    }
+  }, []);
 
   const handleCreateDocument = async (title: string, parentId: string | null = null, courseId: string | null = null, lessonId: string | null = null, content: string = '') => {
     try {
@@ -115,6 +141,15 @@ function App() {
       setDocuments(prev => prev.map(d => d.id === id ? updated : d));
     } catch (err) {
       console.error('Failed to rename document:', err);
+    }
+  };
+
+  const handleDeleteCourse = async (courseId: string) => {
+    try {
+      await deleteCourse(courseId);
+      setCourses(prev => prev.filter(c => c.id !== courseId));
+    } catch (err) {
+      console.error('Failed to delete course:', err);
     }
   };
 
@@ -160,14 +195,19 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (user && view.name === 'dashboard') {
-      setRefreshKey((k) => k + 1);
+    if (userId && view.name === 'dashboard') {
       // Refresh courses when returning to dashboard
       fetchCourses()
         .then(setCourses)
         .catch(err => console.error('Failed to refresh courses:', err));
     }
-  }, [user, view.name]);
+  }, [userId, view.name]);
+
+  useEffect(() => {
+    if (userId && view.name === 'dashboard' && !coursesLoading) {
+      void loadDashboardProgress(courses);
+    }
+  }, [userId, view.name, courses, coursesLoading, loadDashboardProgress]);
 
   if (loading) {
     return (
@@ -202,7 +242,12 @@ function App() {
             onOpenCourse={(courseId) => navigate({ name: 'course', courseId })}
             onGenerate={() => navigate({ name: 'generate' })}
             onProgress={() => navigate({ name: 'progress' })}
-            refreshKey={refreshKey}
+            onDeleteCourse={handleDeleteCourse}
+            courses={courses}
+            coursesLoading={coursesLoading}
+            dashboardProgress={dashboardProgress}
+            dashboardLoading={dashboardLoading}
+            dashboardHasLoaded={dashboardHasLoaded}
           />
         );
 
@@ -237,6 +282,7 @@ function App() {
         return (
           <ProgressView
             userId={user.id}
+            courses={courses}
             onBack={() => navigate({ name: 'dashboard' })}
             onOpenCourse={(courseId) => navigate({ name: 'course', courseId })}
           />

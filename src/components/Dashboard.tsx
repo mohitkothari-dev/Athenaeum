@@ -1,61 +1,42 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Plus, Clock, CheckCircle, BookOpen, Loader2, Trash2, ArrowRight, GraduationCap } from 'lucide-react';
-import type { Course } from '@/types';
-import { fetchCourses, deleteCourse, fetchCourseProgress } from '@/lib/api';
+import type { Course, CourseWithProgress } from '@/types';
 import { COURSE_COLOR_GRADIENTS } from '@/lib/courseColors';
 
 interface DashboardProps {
   onOpenCourse: (courseId: string) => void;
   onGenerate: () => void;
   onProgress: () => void;
-  refreshKey: number;
+  onDeleteCourse: (courseId: string) => Promise<void>;
+  courses: Course[];
+  coursesLoading: boolean;
+  dashboardProgress: CourseWithProgress[];
+  dashboardLoading: boolean;
+  dashboardHasLoaded: boolean;
 }
 
-interface CourseProgress {
-  course: Course;
-  totalLessons: number;
-  completedLessons: number;
-  percent: number;
-}
-
-export function Dashboard({ onOpenCourse, onGenerate, onProgress, refreshKey }: DashboardProps) {
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [progressData, setProgressData] = useState<CourseProgress[]>([]);
-  const [loading, setLoading] = useState(true);
+export function Dashboard({
+  onOpenCourse,
+  onGenerate,
+  onProgress,
+  onDeleteCourse,
+  courses,
+  coursesLoading,
+  dashboardProgress,
+  dashboardLoading,
+  dashboardHasLoaded,
+}: DashboardProps) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await fetchCourses();
-      setCourses(data);
-      const enriched: CourseProgress[] = await Promise.all(
-        data.map(async (course) => {
-          const { totalLessons, completedLessons, percent } = await fetchCourseProgress(course.id);
-          return { course, totalLessons, completedLessons, percent };
-        }),
-      );
-      setProgressData(enriched);
-    } catch (err) {
-      console.error('Failed to load dashboard:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load, refreshKey]);
-
   const handleDelete = async (courseId: string) => {
-    await deleteCourse(courseId);
     setConfirmDelete(null);
-    load();
+    await onDeleteCourse(courseId);
   };
 
-  const inProgress = progressData.filter((p) => p.completedLessons > 0 && p.percent < 100);
-  const completed = progressData.filter((p) => p.percent === 100 && p.totalLessons > 0);
-  const notStarted = progressData.filter((p) => p.completedLessons === 0);
+  const showSpinner = courses.length === 0 && (coursesLoading || (dashboardLoading && !dashboardHasLoaded));
+  const inProgress = dashboardProgress.filter((p) => p.completedLessons > 0 && p.percent < 100);
+  const completed = dashboardProgress.filter((p) => p.percent === 100 && p.totalLessons > 0);
+  const notStarted = dashboardProgress.filter((p) => p.completedLessons === 0);
 
   return (
     <div className="max-w-5xl mx-auto animate-fade-in">
@@ -83,7 +64,7 @@ export function Dashboard({ onOpenCourse, onGenerate, onProgress, refreshKey }: 
         </div>
       </div>
 
-      {loading ? (
+      {showSpinner ? (
         <div className="flex flex-col items-center justify-center py-32">
           <Loader2 className="w-8 h-8 text-warmgray-300 animate-spin mb-3" strokeWidth={1.5} />
           <p className="text-sm text-warmgray-400 font-serif">Loading your courses...</p>
@@ -183,7 +164,7 @@ export function Dashboard({ onOpenCourse, onGenerate, onProgress, refreshKey }: 
 }
 
 interface CourseCardProps {
-  progress: CourseProgress;
+  progress: CourseWithProgress;
   colorClass: string;
   onOpen: () => void;
   onDelete: () => void;
