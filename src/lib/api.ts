@@ -216,7 +216,7 @@ export interface GenerationParams {
 
 export async function generateCourse(
   params: GenerationParams,
-): Promise<{ courseId: string } | { error: string }> {
+): Promise<{ courseId: string; pageId: string | null } | { error: string }> {
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token;
@@ -238,9 +238,111 @@ export async function generateCourse(
       return { error: result.error || 'Generation failed' };
     }
 
-    return { courseId: result.courseId };
+    return {
+      courseId: result.courseId as string,
+      // pageId is null when the knowledge-page generation step failed gracefully
+      pageId: (result.pageId as string | null) ?? null,
+    };
   } catch {
     return { error: 'Failed to connect to AI service' };
+  }
+}
+
+/**
+ * Fetch the knowledge page linked to a course, or null if none exists.
+ * Used by CourseView to show the "Open Knowledge Page" button.
+ */
+export async function fetchDocumentByCourseId(
+  courseId: string,
+): Promise<AppDocument | null> {
+  const { data, error } = await supabase
+    .from('documents')
+    .select('*')
+    .eq('course_id', courseId)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('fetchDocumentByCourseId error:', error);
+    return null;
+  }
+  return (data as AppDocument | null) ?? null;
+}
+
+// ─── generate-notes edge function client helpers ─────────────────────────────
+
+const NOTES_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-notes`;
+
+async function getAuthToken(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
+}
+
+/**
+ * Appends user-selected text to a section of the linked knowledge page.
+ * Returns the updated AppDocument or an error string.
+ */
+export async function saveToPage(
+  documentId: string,
+  selectedText: string,
+  sectionHint: string,
+  sourceLabel: string,
+): Promise<AppDocument | { error: string }> {
+  const token = await getAuthToken();
+  if (!token) return { error: 'Not authenticated' };
+
+  try {
+    const res = await fetch(NOTES_FUNCTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action: 'save_to_page', documentId, selectedText, sectionHint, sourceLabel }),
+    });
+    const json = await res.json();
+    if (!res.ok) return { error: json.error || 'Failed to save to page' };
+    return json.document as AppDocument;
+  } catch {
+    return { error: 'Failed to connect to server' };
+  }
+}
+
+/**
+ * AI-generates bullet points for a named section and appends them.
+ * Never overwrites existing content.
+ * Returns the updated AppDocument or an error string.
+ */
+export async function generateNotesSection(
+  documentId: string,
+  sectionName: string,
+  lessonTitle: string,
+  lessonSubtitle: string,
+  keyTakeaways: string[],
+  learningObjectives: string[],
+  courseTitle: string,
+): Promise<AppDocument | { error: string }> {
+  const token = await getAuthToken();
+  if (!token) return { error: 'Not authenticated' };
+
+  try {
+    const res = await fetch(NOTES_FUNCTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        action: 'generate_section',
+        documentId,
+        sectionName,
+        lessonTitle,
+        lessonSubtitle,
+        keyTakeaways,
+        learningObjectives,
+        courseTitle,
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok) return { error: json.error || 'Failed to generate notes' };
+    return json.document as AppDocument;
+  } catch {
+    return { error: 'Failed to connect to server' };
   }
 }
 

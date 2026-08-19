@@ -1,9 +1,13 @@
 import { useState, FormEvent } from 'react';
-import { Sparkles, ArrowRight, Loader2, Target, Clock, BarChart3, BookOpen } from 'lucide-react';
+import {
+  Sparkles, ArrowRight, Loader2, Target, Clock, BarChart3, BookOpen,
+  FileText, CheckCircle,
+} from 'lucide-react';
 import { generateCourse, type GenerationParams } from '@/lib/api';
 
 interface CourseGeneratorProps {
-  onGenerated: (courseId: string) => void;
+  onGenerated: (courseId: string, pageId: string | null) => void;
+  onOpenPage?: (pageId: string) => void;
   onCancel: () => void;
 }
 
@@ -20,34 +24,46 @@ const exampleTopics = [
   'Investing for beginners',
 ];
 
-export function CourseGenerator({ onGenerated, onCancel }: CourseGeneratorProps) {
+// Ordered status messages shown during generation.
+// The last two are shown during the knowledge-page phase.
+const COURSE_STATUS_MESSAGES = [
+  'Designing your curriculum…',
+  'Writing lessons…',
+  'Creating flashcards…',
+  'Building quizzes…',
+  'Adding practice exercises…',
+];
+const PAGE_STATUS_MESSAGE = 'Creating your knowledge page…';
+
+export function CourseGenerator({ onGenerated, onOpenPage, onCancel }: CourseGeneratorProps) {
   const [topic, setTopic] = useState('');
   const [knowledgeLevel, setKnowledgeLevel] = useState('Beginner');
   const [goal, setGoal] = useState('');
   const [timeCommitment, setTimeCommitment] = useState('30 min/day');
   const [difficulty, setDifficulty] = useState('Medium');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+
+  // loading phases: 'idle' | 'course' | 'page' | 'done'
+  const [phase, setPhase] = useState<'idle' | 'course' | 'page' | 'done'>('idle');
   const [statusText, setStatusText] = useState('');
+  const [error, setError] = useState('');
+
+  // Stored after generation so the success panel can link to both
+  const [resultCourseId, setResultCourseId] = useState('');
+  const [resultPageId, setResultPageId] = useState<string | null>(null);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!topic.trim()) return;
-    setError('');
-    setLoading(true);
-    setStatusText('Designing your curriculum...');
 
-    const statusMessages = [
-      'Designing your curriculum...',
-      'Writing lessons...',
-      'Creating flashcards...',
-      'Building quizzes...',
-      'Adding practice exercises...',
-    ];
+    setError('');
+    setPhase('course');
+    setStatusText(COURSE_STATUS_MESSAGES[0]);
+
+    // Cycle through course-phase messages every 4 s
     let msgIdx = 0;
     const interval = setInterval(() => {
-      msgIdx = (msgIdx + 1) % statusMessages.length;
-      setStatusText(statusMessages[msgIdx]);
+      msgIdx = (msgIdx + 1) % COURSE_STATUS_MESSAGES.length;
+      setStatusText(COURSE_STATUS_MESSAGES[msgIdx]);
     }, 4000);
 
     const params: GenerationParams = {
@@ -63,29 +79,107 @@ export function CourseGenerator({ onGenerated, onCancel }: CourseGeneratorProps)
 
     if ('error' in result) {
       setError(result.error);
-      setLoading(false);
+      setPhase('idle');
       setStatusText('');
-    } else {
-      onGenerated(result.courseId);
+      return;
     }
+
+    // Course is done — show the page-creation phase briefly so the user
+    // knows something more is happening.
+    setPhase('page');
+    setStatusText(PAGE_STATUS_MESSAGE);
+
+    // The edge function already did both steps; we just show the message
+    // for a moment before landing on the success panel.
+    await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+
+    setResultCourseId(result.courseId);
+    setResultPageId(result.pageId);
+    setPhase('done');
   };
 
-  if (loading) {
+  // ── Loading screen (course phase) ────────────────────────────────────────
+  if (phase === 'course' || phase === 'page') {
+    const isPagePhase = phase === 'page';
     return (
       <div className="max-w-lg mx-auto py-20 text-center animate-fade-in">
         <div className="relative w-20 h-20 mx-auto mb-6">
           <div className="absolute inset-0 rounded-full bg-terracotta-50 animate-gentle-pulse" />
           <div className="absolute inset-0 flex items-center justify-center">
-            <Loader2 className="w-10 h-10 text-terracotta-500 animate-spin" strokeWidth={1.5} />
+            {isPagePhase ? (
+              <FileText
+                className="w-10 h-10 text-terracotta-400 animate-gentle-pulse"
+                strokeWidth={1.5}
+              />
+            ) : (
+              <Loader2
+                className="w-10 h-10 text-terracotta-500 animate-spin"
+                strokeWidth={1.5}
+              />
+            )}
           </div>
         </div>
-        <h2 className="font-serif text-2xl text-ink-700 mb-2">Generating your course</h2>
+        <h2 className="font-serif text-2xl text-ink-700 mb-2">
+          {isPagePhase ? 'Building your knowledge page' : 'Generating your course'}
+        </h2>
         <p className="text-sm text-warmgray-400 font-serif italic">{statusText}</p>
-        <p className="text-xs text-warmgray-300 mt-4">This usually takes 20-40 seconds</p>
+        <p className="text-xs text-warmgray-300 mt-4">
+          {isPagePhase
+            ? 'Creating a reference page you can edit any time'
+            : 'This usually takes 20–40 seconds'}
+        </p>
       </div>
     );
   }
 
+  // ── Success panel ─────────────────────────────────────────────────────────
+  if (phase === 'done') {
+    return (
+      <div className="max-w-lg mx-auto py-20 text-center animate-fade-in">
+        <div className="w-16 h-16 rounded-full bg-sage-100 flex items-center justify-center mx-auto mb-6">
+          <CheckCircle className="w-8 h-8 text-sage-600" strokeWidth={1.5} />
+        </div>
+        <h2 className="font-serif text-2xl text-ink-700 mb-2">Your course is ready</h2>
+
+        {resultPageId ? (
+          <p className="text-sm text-warmgray-400 mb-8">
+            A knowledge page has been created alongside your course — use it as
+            a personal reference as you learn.
+          </p>
+        ) : (
+          <p className="text-sm text-warmgray-400 mb-8">
+            Your course has been generated successfully.
+          </p>
+        )}
+
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <button
+            onClick={() => onGenerated(resultCourseId, resultPageId)}
+            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-terracotta-500 text-cream-50 hover:bg-terracotta-600 font-medium text-sm transition-colors shadow-soft"
+          >
+            <BookOpen className="w-4 h-4" strokeWidth={1.5} />
+            Open Course
+            <ArrowRight className="w-4 h-4" strokeWidth={2} />
+          </button>
+
+          {resultPageId && (
+            <button
+              onClick={() => {
+                if (onOpenPage) onOpenPage(resultPageId);
+                else onGenerated(resultCourseId, resultPageId);
+              }}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-cream-50 border border-cream-200 text-ink-600 hover:bg-cream-200 font-medium text-sm transition-colors"
+            >
+              <FileText className="w-4 h-4" strokeWidth={1.5} />
+              Open Knowledge Page
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Form ──────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-2xl mx-auto animate-fade-in">
       <div className="mb-8">
@@ -100,6 +194,7 @@ export function CourseGenerator({ onGenerated, onCancel }: CourseGeneratorProps)
       </div>
 
       <form onSubmit={handleSubmit} className="bg-cream-50 rounded-xl2 border border-cream-200 p-7 space-y-6">
+        {/* Topic */}
         <div>
           <label className="block text-sm font-semibold text-ink-600 mb-2">
             <BookOpen className="w-4 h-4 inline mr-1.5 -mt-0.5" strokeWidth={1.5} />
@@ -127,6 +222,7 @@ export function CourseGenerator({ onGenerated, onCancel }: CourseGeneratorProps)
           </div>
         </div>
 
+        {/* Knowledge level */}
         <div>
           <label className="block text-sm font-semibold text-ink-600 mb-2">
             <BarChart3 className="w-4 h-4 inline mr-1.5 -mt-0.5" strokeWidth={1.5} />
@@ -150,10 +246,12 @@ export function CourseGenerator({ onGenerated, onCancel }: CourseGeneratorProps)
           </div>
         </div>
 
+        {/* Goal */}
         <div>
           <label className="block text-sm font-semibold text-ink-600 mb-2">
             <Target className="w-4 h-4 inline mr-1.5 -mt-0.5" strokeWidth={1.5} />
-            What's your goal? <span className="text-warmgray-300 font-normal">(optional)</span>
+            What's your goal?{' '}
+            <span className="text-warmgray-300 font-normal">(optional)</span>
           </label>
           <textarea
             value={goal}
@@ -164,6 +262,7 @@ export function CourseGenerator({ onGenerated, onCancel }: CourseGeneratorProps)
           />
         </div>
 
+        {/* Time + Difficulty */}
         <div className="grid md:grid-cols-2 gap-5">
           <div>
             <label className="block text-sm font-semibold text-ink-600 mb-2">
@@ -176,9 +275,7 @@ export function CourseGenerator({ onGenerated, onCancel }: CourseGeneratorProps)
               className="w-full px-4 py-3 rounded-xl bg-cream-100 border border-cream-200 text-sm text-ink-600 focus:outline-none focus:border-sand-300 focus:bg-cream-50 transition-colors cursor-pointer"
             >
               {timeOptions.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
+                <option key={t} value={t}>{t}</option>
               ))}
             </select>
           </div>
