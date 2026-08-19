@@ -217,10 +217,14 @@ function App() {
     if ('error' in result) {
       setHomeGenerationError(result.error);
     } else {
-      // Refresh courses list so the new course appears in sidebar/library
+      // Refresh courses and documents so the new course + knowledge page
+      // appear in the sidebar immediately.
       fetchCourses()
         .then(setCourses)
         .catch(err => console.error('Failed to refresh courses after generation:', err));
+      fetchDocuments()
+        .then(setDocuments)
+        .catch(err => console.error('Failed to refresh documents after generation:', err));
       navigate({ name: 'course', courseId: result.courseId });
     }
   }, [navigate]);
@@ -309,8 +313,26 @@ function App() {
       case 'generate':
         return (
           <CourseGenerator
-            onGenerated={(courseId) => navigate({ name: 'course', courseId })}
-            onCancel={() => navigate({ name: 'dashboard' })}
+            onGenerated={(courseId, pageId) => {
+              // Refresh courses + documents so sidebar reflects new items
+              fetchCourses()
+                .then(setCourses)
+                .catch(err => console.error('Failed to refresh courses after generation:', err));
+              fetchDocuments()
+                .then(setDocuments)
+                .catch(err => console.error('Failed to refresh documents after generation:', err));
+              navigate({ name: 'course', courseId });
+              // pageId is available but we navigate to the course first;
+              // the user can open the page from CourseView's button.
+              void pageId; // acknowledge it without suppressing the lint rule
+            }}
+            onOpenPage={(pageId) => {
+              fetchDocuments()
+                .then(setDocuments)
+                .catch(err => console.error('Failed to refresh documents:', err));
+              navigate({ name: 'document', documentId: pageId });
+            }}
+            onCancel={() => navigate({ name: 'home' })}
           />
         );
 
@@ -319,6 +341,7 @@ function App() {
           <CourseView
             courseId={view.courseId}
             onOpenLesson={(courseId, lessonId) => navigate({ name: 'lesson', courseId, lessonId })}
+            onOpenPage={(documentId) => navigate({ name: 'document', documentId })}
             onBack={() => navigate({ name: 'dashboard' })}
           />
         );
@@ -330,6 +353,15 @@ function App() {
             lessonId={view.lessonId}
             onBack={() => navigate({ name: 'course', courseId: view.courseId })}
             onOpenLesson={(courseId, lessonId) => navigate({ name: 'lesson', courseId, lessonId })}
+            onOpenPage={(documentId) => navigate({ name: 'document', documentId })}
+            onPageUpdated={(doc) => {
+              // Keep the in-memory documents list in sync after a save-to-page
+              setDocuments((prev) =>
+                prev.some((d) => d.id === doc.id)
+                  ? prev.map((d) => (d.id === doc.id ? doc : d))
+                  : [...prev, doc],
+              );
+            }}
           />
         );
 
@@ -350,24 +382,40 @@ function App() {
             <div className="text-center py-20">
               <p className="font-serif text-xl text-ink-600">Document not found.</p>
               <button 
-                onClick={() => navigate({ name: 'dashboard' })} 
+                onClick={() => navigate({ name: 'home' })} 
                 className="mt-4 text-sm text-terracotta-600 font-medium"
               >
-                Back to dashboard
+                Back to home
               </button>
             </div>
           );
         }
+        // Resolve linked course title for the "Continue Learning" banner
+        const linkedCourse = currentDoc.course_id
+          ? courses.find(c => c.id === currentDoc.course_id)
+          : undefined;
         return (
           <DocumentEditor
             document={currentDoc}
             onSave={(updates) => handleUpdateDocument(currentDoc.id, updates)}
             onDelete={() => handleDeleteDocument(currentDoc.id)}
-            onBack={() => navigate({ name: 'dashboard' })}
+            onBack={() => navigate({ name: 'home' })}
             allDocuments={documents}
+            linkedCourseTitle={linkedCourse?.title}
+            onOpenCourse={
+              currentDoc.course_id
+                ? (courseId) => navigate({ name: 'course', courseId })
+                : undefined
+            }
+            onPageUpdated={(doc) => {
+              setDocuments((prev) =>
+                prev.some((d) => d.id === doc.id)
+                  ? prev.map((d) => (d.id === doc.id ? doc : d))
+                  : [...prev, doc],
+              );
+            }}
           />
         );
-
       }
 
       case 'canvas':

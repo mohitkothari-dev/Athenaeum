@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
   Trash2, ArrowLeft, Eye, Edit3, Image as ImageIcon, 
-  Heading1, Heading2, Heading3, List, CheckSquare, Quote, Code, AlertCircle, Loader2 
+  Heading1, Heading2, Heading3, List, CheckSquare, Quote, Code, AlertCircle, Loader2,
+  BookOpen, ArrowRight, Sparkles, ChevronDown, Check, X,
 } from 'lucide-react';
 import { AppDocument } from '@/types';
+import { generateNotesSection } from '@/lib/api';
 
 interface DocumentEditorProps {
   document: AppDocument;
@@ -11,6 +13,12 @@ interface DocumentEditorProps {
   onDelete: () => Promise<void>;
   onBack?: () => void;
   allDocuments: AppDocument[];
+  /** Title of the linked course, if any. Passed only when document.course_id is set. */
+  linkedCourseTitle?: string;
+  /** Called when the user clicks "Continue Learning" on a course-linked page. */
+  onOpenCourse?: (courseId: string) => void;
+  /** Called after AI appends content so App.tsx state stays in sync. */
+  onPageUpdated?: (doc: AppDocument) => void;
 }
 
 const COMMON_EMOJIS = ['📝', '📓', '💡', '💻', '🎓', '🎨', '📚', '✍️', '🎯', '🚀', '🧠', '📆', '📂', '🔑', '🏷️', '📢'];
@@ -24,7 +32,7 @@ const COVERS = [
   { name: 'Golden Glow', class: 'bg-gradient-to-r from-gold-400 to-amber-500' }
 ];
 
-export function DocumentEditor({ document, onSave, onDelete, onBack, allDocuments }: DocumentEditorProps) {
+export function DocumentEditor({ document, onSave, onDelete, onBack, allDocuments, linkedCourseTitle, onOpenCourse, onPageUpdated }: DocumentEditorProps) {
   const [title, setTitle] = useState(document.title);
   const [content, setContent] = useState(document.content);
   const [icon, setIcon] = useState(document.icon || '📝');
@@ -41,6 +49,13 @@ export function DocumentEditor({ document, onSave, onDelete, onBack, allDocument
   const [slashCoords, setSlashCoords] = useState({ top: 0, left: 0 });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandMenuRef = useRef<HTMLDivElement>(null);
+
+  // AI Generate Notes state (only shown for course-linked pages)
+  const [aiGenerating,    setAiGenerating   ] = useState(false);
+  const [aiMsg,           setAiMsg          ] = useState<string | null>(null);
+  const [aiError,         setAiError        ] = useState('');
+  const [showAiDropdown,  setShowAiDropdown ] = useState(false);
+  const aiDropdownRef = useRef<HTMLDivElement>(null);
   
   // Auto-save debounce
   const saveTimeoutRef = useRef<NodeJS.Timeout>();
@@ -52,6 +67,17 @@ export function DocumentEditor({ document, onSave, onDelete, onBack, allDocument
     setCoverImage(document.cover_image || COVERS[0].class);
     setMode('edit');
   }, [document.id, document.title, document.content, document.icon, document.cover_image]);
+
+  // Close AI dropdown on outside click
+  useEffect(() => {
+    if (!showAiDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (aiDropdownRef.current && !aiDropdownRef.current.contains(e.target as Node))
+        setShowAiDropdown(false);
+    };
+    window.document.addEventListener('mousedown', handler);
+    return () => window.document.removeEventListener('mousedown', handler);
+  }, [showAiDropdown]);
 
   const triggerSave = (updatedFields: Partial<AppDocument>) => {
     setIsSaving(true);
@@ -91,6 +117,38 @@ export function DocumentEditor({ document, onSave, onDelete, onBack, allDocument
     setCoverImage(coverClass);
     triggerSave({ cover_image: coverClass });
     setShowCoverPicker(false);
+  };
+
+  // AI generate a section and append — never overwrites existing content.
+  // Requires the page to be linked to a course (document.course_id set).
+  const handleAiGenerate = async (sectionName: string) => {
+    if (!document.course_id) return;
+    setShowAiDropdown(false);
+    setAiGenerating(true);
+    setAiError('');
+
+    // We don't have lesson context here — generate from the page title / course title
+    const result = await generateNotesSection(
+      document.id,
+      sectionName,
+      document.title,           // use page title as "lesson" context
+      '',
+      [],
+      [],
+      linkedCourseTitle ?? document.title,
+    );
+
+    setAiGenerating(false);
+
+    if ('error' in result) {
+      setAiError(result.error);
+    } else {
+      // Update local content so the editor reflects the change immediately
+      setContent(result.content);
+      onPageUpdated?.(result);
+      setAiMsg(`Added to "${sectionName}"`);
+      setTimeout(() => setAiMsg(null), 3000);
+    }
   };
 
   // Find document breadcrumbs
@@ -353,6 +411,57 @@ export function DocumentEditor({ document, onSave, onDelete, onBack, allDocument
             )}
           </div>
 
+          {/* AI Generate Notes — only for course-linked pages */}
+          {document.course_id && (
+            <div className="relative" ref={aiDropdownRef}>
+              <button
+                onClick={() => setShowAiDropdown((v) => !v)}
+                disabled={aiGenerating}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-terracotta-50 border border-terracotta-100 text-xs font-medium text-terracotta-600 hover:bg-terracotta-100 transition-colors disabled:opacity-50"
+                aria-label="AI generate notes"
+              >
+                {aiGenerating
+                  ? <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.5} />
+                  : <Sparkles className="w-3 h-3" strokeWidth={1.5} />}
+                <span className="hidden sm:inline">Generate notes</span>
+                <ChevronDown className="w-3 h-3" strokeWidth={2} />
+              </button>
+
+              {showAiDropdown && (
+                <div className="absolute right-0 top-full mt-1 w-48 bg-cream-50 border border-cream-200 rounded-xl shadow-lifted z-30 py-1 animate-fade-in-soft">
+                  {['Key Concepts','Examples','Common Mistakes','My Notes','Questions'].map((sec) => (
+                    <button
+                      key={sec}
+                      onClick={() => void handleAiGenerate(sec)}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-warmgray-600 hover:bg-cream-100 hover:text-ink-700 transition-colors text-left"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-terracotta-400 flex-shrink-0" strokeWidth={1.5} />
+                      {sec}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Feedback banner */}
+              {(aiMsg || aiError) && (
+                <div className={`absolute right-0 top-full mt-10 w-56 px-3 py-2 rounded-lg shadow-soft text-xs flex items-center gap-2 z-20 ${
+                  aiError ? 'bg-brick-50 border border-brick-100 text-brick-600' : 'bg-sage-50 border border-sage-200 text-sage-700'
+                }`}>
+                  {aiError
+                    ? <X className="w-3 h-3 flex-shrink-0" strokeWidth={2} />
+                    : <Check className="w-3 h-3 flex-shrink-0" strokeWidth={2} />}
+                  {aiError || aiMsg}
+                  <button
+                    onClick={() => { setAiMsg(null); setAiError(''); }}
+                    className="ml-auto opacity-60 hover:opacity-100"
+                  >
+                    <X className="w-3 h-3" strokeWidth={2} />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
 
           {/* Mode Switcher */}
           <div className="flex items-center bg-cream-200 rounded-lg p-0.5 border border-cream-200/40">
@@ -394,6 +503,28 @@ export function DocumentEditor({ document, onSave, onDelete, onBack, allDocument
           </button>
         </div>
       </header>
+
+      {/* Continue Learning banner — shown when this page is linked to a course */}
+      {document.course_id && onOpenCourse && (
+        <div className="px-5 py-2.5 bg-terracotta-50 border-b border-terracotta-100 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-terracotta-700">
+            <BookOpen className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
+            <span>
+              Knowledge page for{' '}
+              <span className="font-medium">
+                {linkedCourseTitle || 'a course'}
+              </span>
+            </span>
+          </div>
+          <button
+            onClick={() => onOpenCourse(document.course_id!)}
+            className="flex items-center gap-1.5 text-xs font-medium text-terracotta-600 hover:text-terracotta-700 transition-colors flex-shrink-0"
+          >
+            Continue Learning
+            <ArrowRight className="w-3.5 h-3.5" strokeWidth={2} />
+          </button>
+        </div>
+      )}
 
       {/* Editor Content Area */}
       <div className="flex-1 flex relative min-h-0 overflow-y-auto">

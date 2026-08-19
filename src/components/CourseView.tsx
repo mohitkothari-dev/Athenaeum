@@ -1,29 +1,37 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Clock, CheckCircle, ArrowRight, BookOpen, Loader2 } from 'lucide-react';
-import type { Course, Module, LessonProgress } from '@/types';
-import { fetchCourseWithModules, fetchLessonProgress } from '@/lib/api';
+import {
+  ArrowLeft, Clock, CheckCircle, ArrowRight, BookOpen, Loader2, FileText,
+} from 'lucide-react';
+import type { Course, Module, LessonProgress, AppDocument } from '@/types';
+import { fetchCourseWithModules, fetchLessonProgress, fetchDocumentByCourseId } from '@/lib/api';
 import { COURSE_COLOR_GRADIENTS } from '@/lib/courseColors';
 
 interface CourseViewProps {
   courseId: string;
   onOpenLesson: (courseId: string, lessonId: string) => void;
+  onOpenPage: (documentId: string) => void;
   onBack: () => void;
 }
 
-export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) {
+export function CourseView({ courseId, onOpenLesson, onOpenPage, onBack }: CourseViewProps) {
   const [course, setCourse] = useState<Course | null>(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [progressMap, setProgressMap] = useState<Map<string, LessonProgress>>(new Map());
+  const [knowledgePage, setKnowledgePage] = useState<AppDocument | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { course: c, modules: mods } = await fetchCourseWithModules(courseId);
+      const [{ course: c, modules: mods }, progress, page] = await Promise.all([
+        fetchCourseWithModules(courseId),
+        fetchLessonProgress(courseId),
+        fetchDocumentByCourseId(courseId),
+      ]);
       setCourse(c);
       setModules(mods);
-      const progress = await fetchLessonProgress(courseId);
       setProgressMap(progress);
+      setKnowledgePage(page);
     } catch (err) {
       console.error('Failed to load course:', err);
     } finally {
@@ -36,14 +44,20 @@ export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) 
   }, [load]);
 
   const totalLessons = modules.reduce((sum, m) => sum + m.lessons.length, 0);
-  const completedLessons = Array.from(progressMap.values()).filter((p) => p.status === 'completed').length;
-  const percent = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+  const completedLessons = Array.from(progressMap.values()).filter(
+    (p) => p.status === 'completed',
+  ).length;
+  const percent =
+    totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
 
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-32">
-        <Loader2 className="w-8 h-8 text-warmgray-300 animate-spin mb-3" strokeWidth={1.5} />
-        <p className="text-sm text-warmgray-400 font-serif">Loading course...</p>
+        <Loader2
+          className="w-8 h-8 text-warmgray-300 animate-spin mb-3"
+          strokeWidth={1.5}
+        />
+        <p className="text-sm text-warmgray-400 font-serif">Loading course…</p>
       </div>
     );
   }
@@ -52,7 +66,10 @@ export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) 
     return (
       <div className="text-center py-20">
         <p className="font-serif text-xl text-ink-600">Course not found.</p>
-        <button onClick={onBack} className="mt-4 text-sm text-terracotta-600 font-medium">
+        <button
+          onClick={onBack}
+          className="mt-4 text-sm text-terracotta-600 font-medium"
+        >
           Back to dashboard
         </button>
       </div>
@@ -61,6 +78,7 @@ export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) 
 
   return (
     <div className="max-w-3xl mx-auto animate-fade-in">
+      {/* Back */}
       <button
         onClick={onBack}
         className="flex items-center gap-1.5 text-sm text-warmgray-400 hover:text-ink-600 transition-colors mb-6"
@@ -69,11 +87,40 @@ export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) 
         Back to library
       </button>
 
-      <div className={`h-2 rounded-full bg-gradient-to-r ${COURSE_COLOR_GRADIENTS[course.cover_color] || COURSE_COLOR_GRADIENTS.terracotta} mb-6`} />
+      {/* Colour bar */}
+      <div
+        className={`h-2 rounded-full bg-gradient-to-r ${
+          COURSE_COLOR_GRADIENTS[course.cover_color] ||
+          COURSE_COLOR_GRADIENTS.terracotta
+        } mb-6`}
+      />
 
-      <h1 className="font-serif text-3xl md:text-4xl text-ink-700 leading-tight mb-2">{course.title}</h1>
-      <p className="reading-text !text-[1.0625rem] !leading-[1.75] text-warmgray-500 mb-6">{course.description}</p>
+      {/* Title row + Knowledge Page button */}
+      <div className="flex items-start justify-between gap-4 mb-2">
+        <h1 className="font-serif text-3xl md:text-4xl text-ink-700 leading-tight flex-1">
+          {course.title}
+        </h1>
 
+        {knowledgePage && (
+          <button
+            onClick={() => onOpenPage(knowledgePage.id)}
+            className="flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-cream-50 border border-cream-200 text-sm font-medium text-ink-600 hover:bg-cream-200 hover:border-sand-200 transition-all shadow-soft group"
+            title={`Open knowledge page: ${knowledgePage.title}`}
+          >
+            <FileText
+              className="w-4 h-4 text-warmgray-400 group-hover:text-terracotta-500 transition-colors"
+              strokeWidth={1.5}
+            />
+            <span className="hidden sm:inline">Knowledge Page</span>
+          </button>
+        )}
+      </div>
+
+      <p className="reading-text !text-[1.0625rem] !leading-[1.75] text-warmgray-500 mb-6">
+        {course.description}
+      </p>
+
+      {/* Metadata chips */}
       <div className="flex flex-wrap items-center gap-4 text-xs text-warmgray-400 mb-6">
         <span className="flex items-center gap-1">
           <BookOpen className="w-3.5 h-3.5" strokeWidth={1.5} />
@@ -91,10 +138,13 @@ export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) 
         </span>
       </div>
 
+      {/* Progress card */}
       <div className="bg-cream-100 rounded-xl2 border border-cream-200 p-5 mb-8">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-semibold text-ink-600">Course Progress</span>
-          <span className="font-serif text-xl text-terracotta-500 tabular-nums">{percent}%</span>
+          <span className="font-serif text-xl text-terracotta-500 tabular-nums">
+            {percent}%
+          </span>
         </div>
         <div className="h-2 bg-cream-200 rounded-full overflow-hidden">
           <div
@@ -107,6 +157,7 @@ export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) 
         </p>
       </div>
 
+      {/* Module / lesson list */}
       <div className="space-y-8">
         {modules.map((module, mIdx) => (
           <div key={module.id}>
@@ -116,14 +167,20 @@ export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) 
               </span>
               <h2 className="font-serif text-xl text-ink-700">{module.title}</h2>
             </div>
-            <p className="text-sm text-warmgray-400 mb-4 leading-relaxed">{module.description}</p>
+            <p className="text-sm text-warmgray-400 mb-4 leading-relaxed">
+              {module.description}
+            </p>
 
             <div className="space-y-2.5">
               {module.lessons.map((lesson, lIdx) => {
-                const status = progressMap.get(lesson.id)?.status ?? 'not_started';
-                const globalIdx = modules
-                  .slice(0, mIdx)
-                  .reduce((sum, m) => sum + m.lessons.length, 0) + lIdx + 1;
+                const status =
+                  progressMap.get(lesson.id)?.status ?? 'not_started';
+                const globalIdx =
+                  modules
+                    .slice(0, mIdx)
+                    .reduce((sum, m) => sum + m.lessons.length, 0) +
+                  lIdx +
+                  1;
 
                 return (
                   <button
@@ -134,22 +191,35 @@ export function CourseView({ courseId, onOpenLesson, onBack }: CourseViewProps) 
                     <div className="flex-shrink-0">
                       {status === 'completed' ? (
                         <div className="w-9 h-9 rounded-full bg-sage-200 flex items-center justify-center">
-                          <CheckCircle className="w-5 h-5 text-sage-600" strokeWidth={1.5} />
+                          <CheckCircle
+                            className="w-5 h-5 text-sage-600"
+                            strokeWidth={1.5}
+                          />
                         </div>
                       ) : status === 'in_progress' ? (
                         <div className="w-9 h-9 rounded-full bg-gold-50 border-2 border-gold-300 flex items-center justify-center">
-                          <span className="text-sm font-semibold text-gold-500">{globalIdx}</span>
+                          <span className="text-sm font-semibold text-gold-500">
+                            {globalIdx}
+                          </span>
                         </div>
                       ) : (
                         <div className="w-9 h-9 rounded-full bg-cream-200 flex items-center justify-center">
-                          <span className="text-sm font-semibold text-warmgray-500">{globalIdx}</span>
+                          <span className="text-sm font-semibold text-warmgray-500">
+                            {globalIdx}
+                          </span>
                         </div>
                       )}
                     </div>
+
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-serif text-lg text-ink-700 leading-snug">{lesson.title}</h3>
-                      <p className="text-sm text-warmgray-400 mt-0.5">{lesson.subtitle}</p>
+                      <h3 className="font-serif text-lg text-ink-700 leading-snug">
+                        {lesson.title}
+                      </h3>
+                      <p className="text-sm text-warmgray-400 mt-0.5">
+                        {lesson.subtitle}
+                      </p>
                     </div>
+
                     <div className="flex items-center gap-3 flex-shrink-0">
                       <span className="hidden sm:flex items-center gap-1 text-xs text-warmgray-400">
                         <Clock className="w-3.5 h-3.5" strokeWidth={1.5} />
