@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   BookOpen, Plus, LogOut, X, ChevronRight, ChevronDown,
-  MoreHorizontal, Trash2, FilePlus, Loader2, Pencil,
+  MoreHorizontal, Trash2, FilePlus, Loader2, Pencil, Home, GraduationCap,
 } from 'lucide-react';
 import type { Course, AppDocument } from '@/types';
 import type { CanvasDocument } from '@/types/canvas';
@@ -16,6 +16,7 @@ interface SidebarProps {
   onCloseSidebar: () => void;
 
   // Navigation
+  onNavigateHome: () => void;
   onNavigateDashboard: () => void;
   onNavigateGenerate: () => void;
   onNavigateCourse: (courseId: string) => void;
@@ -63,12 +64,10 @@ function buildDocTree(docs: AppDocument[]): DocTreeNode[] {
   const map = new Map<string, DocTreeNode>();
   const roots: DocTreeNode[] = [];
 
-  // Create nodes
   for (const doc of docs) {
     map.set(doc.id, { doc, children: [] });
   }
 
-  // Link parents
   for (const doc of docs) {
     const node = map.get(doc.id)!;
     if (doc.parent_id && map.has(doc.parent_id)) {
@@ -81,11 +80,30 @@ function buildDocTree(docs: AppDocument[]): DocTreeNode[] {
   return roots;
 }
 
+// ---------- Shared nav-item style ----------
+
+function navItemClass(active: boolean) {
+  return `w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-1 ${
+    active
+      ? 'bg-cream-200 text-ink-700'
+      : 'text-warmgray-500 hover:bg-cream-200/60 hover:text-ink-600'
+  }`;
+}
+
+function sectionHeading(label: string) {
+  return (
+    <p className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-widest text-warmgray-300 select-none">
+      {label}
+    </p>
+  );
+}
+
 // ---------- Main Component ----------
 
 export function Sidebar({
   sidebarOpen,
   onCloseSidebar,
+  onNavigateHome,
   onNavigateDashboard,
   onNavigateGenerate,
   onNavigateCourse,
@@ -110,8 +128,8 @@ export function Sidebar({
   userEmail,
   onSignOut,
 }: SidebarProps) {
-  const [libraryExpanded, setLibraryExpanded] = useState(true);
-  const [pagesExpanded, setPagesExpanded] = useState(true);
+  const [learnExpanded, setLearnExpanded] = useState(true);
+  const [knowledgeExpanded, setKnowledgeExpanded] = useState(true);
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
   const [creatingPage, setCreatingPage] = useState(false);
 
@@ -120,11 +138,8 @@ export function Sidebar({
   const toggleDocExpanded = (docId: string) => {
     setExpandedDocs(prev => {
       const next = new Set(prev);
-      if (next.has(docId)) {
-        next.delete(docId);
-      } else {
-        next.add(docId);
-      }
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
       return next;
     });
   };
@@ -139,86 +154,101 @@ export function Sidebar({
   };
 
   const handleCreateSubPage = async (parentId: string) => {
-    // Expand the parent so user sees the new child
     setExpandedDocs(prev => new Set(prev).add(parentId));
     await onCreateDocument('Untitled', parentId);
   };
 
   return (
     <aside
-      className={`fixed lg:sticky top-0 left-0 h-screen w-72 bg-cream-100 border-r border-cream-200 z-40 flex flex-col transition-transform duration-300 ${
+      className={`fixed lg:sticky top-0 left-0 h-screen w-64 bg-cream-100 border-r border-cream-200 z-40 flex flex-col transition-transform duration-300 ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       }`}
     >
       {/* Logo */}
-      <div className="px-6 pt-7 pb-4 flex items-center justify-between">
-        <button onClick={onNavigateDashboard} className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-lg bg-terracotta-500 flex items-center justify-center shadow-soft">
-            <BookOpen className="w-5 h-5 text-cream-50" strokeWidth={1.5} />
+      <div className="px-5 pt-6 pb-4 flex items-center justify-between">
+        <button
+          onClick={onNavigateHome}
+          className="flex items-center gap-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 rounded-lg"
+          aria-label="Go to home"
+        >
+          <div className="w-8 h-8 rounded-lg bg-terracotta-500 flex items-center justify-center shadow-soft flex-shrink-0">
+            <BookOpen className="w-4 h-4 text-cream-50" strokeWidth={1.5} />
           </div>
           <span className="font-serif text-xl text-ink-700 tracking-tight">Athenaeum</span>
         </button>
         <button
           onClick={onCloseSidebar}
-          className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-cream-200 text-ink-500"
+          aria-label="Close sidebar"
+          className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-cream-200 text-ink-500 transition-colors"
         >
           <X className="w-5 h-5" strokeWidth={1.5} />
         </button>
       </div>
 
       {/* Scrollable nav */}
-      <nav className="flex-1 px-3 py-1 overflow-y-auto scrollbar-thin space-y-1">
+      <nav className="flex-1 px-3 py-1 overflow-y-auto scrollbar-thin" aria-label="Main navigation">
 
-        {/* ── Library Section ── */}
-        <div>
+        {/* ── LEARN section ── */}
+        <div className="mb-1">
           <button
-            onClick={() => setLibraryExpanded(!libraryExpanded)}
-            className="w-full flex items-center justify-between px-2 py-1.5 rounded-md text-[11px] font-semibold uppercase tracking-wider text-warmgray-400 hover:text-warmgray-600 transition-colors"
+            onClick={() => setLearnExpanded(!learnExpanded)}
+            aria-expanded={learnExpanded}
+            className="w-full flex items-center justify-between px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest text-warmgray-300 hover:text-warmgray-500 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400"
           >
-            <span>Library</span>
-            {libraryExpanded ? (
-              <ChevronDown className="w-3.5 h-3.5" strokeWidth={2} />
-            ) : (
-              <ChevronRight className="w-3.5 h-3.5" strokeWidth={2} />
-            )}
+            <span>Learn</span>
+            {learnExpanded
+              ? <ChevronDown className="w-3 h-3" strokeWidth={2.5} />
+              : <ChevronRight className="w-3 h-3" strokeWidth={2.5} />}
           </button>
 
-          {libraryExpanded && (
+          {learnExpanded && (
             <div className="mt-0.5 space-y-0.5">
-              {/* All Courses link */}
+              {/* Home */}
               <button
-                onClick={onNavigateDashboard}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  activeView === 'dashboard'
-                    ? 'bg-cream-200 text-ink-700'
-                    : 'text-warmgray-500 hover:bg-cream-200/60 hover:text-ink-600'
-                }`}
+                onClick={onNavigateHome}
+                className={navItemClass(activeView === 'home')}
+                aria-current={activeView === 'home' ? 'page' : undefined}
               >
-                <BookOpen className="w-[16px] h-[16px]" strokeWidth={1.5} />
-                All Courses
+                <Home className="w-[15px] h-[15px]" strokeWidth={1.5} />
+                Home
               </button>
 
-              {/* Course list */}
+              {/* Courses */}
+              <button
+                onClick={onNavigateDashboard}
+                className={navItemClass(activeView === 'dashboard')}
+                aria-current={activeView === 'dashboard' ? 'page' : undefined}
+              >
+                <GraduationCap className="w-[15px] h-[15px]" strokeWidth={1.5} />
+                Courses
+              </button>
+
+              {/* Course list (indented) */}
               {coursesLoading ? (
-                <div className="flex items-center gap-2 px-3 py-2 text-xs text-warmgray-400">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.5} />
+                <div className="flex items-center gap-2 pl-8 pr-3 py-1.5 text-xs text-warmgray-400">
+                  <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.5} />
                   Loading...
                 </div>
               ) : (
                 courses.map((course) => {
-                  const isActive = activeCourseId === course.id && (activeView === 'course' || activeView === 'lesson');
+                  const isActive =
+                    activeCourseId === course.id &&
+                    (activeView === 'course' || activeView === 'lesson');
                   return (
                     <button
                       key={course.id}
                       onClick={() => onNavigateCourse(course.id)}
-                      className={`w-full flex items-center gap-2.5 pl-6 pr-3 py-1.5 rounded-lg text-[13px] transition-all group ${
+                      title={course.title}
+                      className={`w-full flex items-center gap-2 pl-8 pr-3 py-1.5 rounded-lg text-[12px] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-1 ${
                         isActive
                           ? 'bg-cream-200 text-ink-700 font-medium'
                           : 'text-warmgray-500 hover:bg-cream-200/60 hover:text-ink-600'
                       }`}
-                      title={course.title}
                     >
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${COURSE_COLOR_DOTS[course.cover_color] || COURSE_COLOR_DOTS.terracotta}`} />
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${COURSE_COLOR_DOTS[course.cover_color] || COURSE_COLOR_DOTS.terracotta}`}
+                        aria-hidden="true"
+                      />
                       <span className="truncate">{course.title}</span>
                     </button>
                   );
@@ -228,13 +258,10 @@ export function Sidebar({
               {/* New Course */}
               <button
                 onClick={onNavigateGenerate}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  activeView === 'generate'
-                    ? 'bg-cream-200 text-ink-700'
-                    : 'text-warmgray-500 hover:bg-cream-200/60 hover:text-ink-600'
-                }`}
+                className={navItemClass(activeView === 'generate')}
+                aria-current={activeView === 'generate' ? 'page' : undefined}
               >
-                <Plus className="w-[16px] h-[16px]" strokeWidth={1.5} />
+                <Plus className="w-[15px] h-[15px]" strokeWidth={1.5} />
                 New Course
               </button>
             </div>
@@ -242,105 +269,109 @@ export function Sidebar({
         </div>
 
         {/* Divider */}
-        <div className="h-px bg-cream-200 my-2" />
+        <div className="h-px bg-cream-200 my-2" aria-hidden="true" />
 
-        {/* ── My Pages Section ── */}
+        {/* ── KNOWLEDGE section ── */}
         <div>
-          <div className="flex items-center justify-between px-2 py-1.5">
-            <button
-              onClick={() => setPagesExpanded(!pagesExpanded)}
-              className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-warmgray-400 hover:text-warmgray-600 transition-colors"
-            >
-              {pagesExpanded ? (
-                <ChevronDown className="w-3.5 h-3.5" strokeWidth={2} />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5" strokeWidth={2} />
-              )}
-              <span>My Pages</span>
-            </button>
-            <button
-              onClick={handleCreateRootPage}
-              disabled={creatingPage}
-              className="w-6 h-6 rounded-md flex items-center justify-center text-warmgray-400 hover:text-ink-600 hover:bg-cream-200 transition-colors"
-              title="New page"
-            >
-              {creatingPage ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.5} />
-              ) : (
-                <Plus className="w-3.5 h-3.5" strokeWidth={2} />
-              )}
-            </button>
-          </div>
+          <button
+            onClick={() => setKnowledgeExpanded(!knowledgeExpanded)}
+            aria-expanded={knowledgeExpanded}
+            className="w-full flex items-center justify-between px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest text-warmgray-300 hover:text-warmgray-500 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400"
+          >
+            <span>Knowledge</span>
+            {knowledgeExpanded
+              ? <ChevronDown className="w-3 h-3" strokeWidth={2.5} />
+              : <ChevronRight className="w-3 h-3" strokeWidth={2.5} />}
+          </button>
 
-          {pagesExpanded && (
-            <div className="mt-0.5 space-y-0.5">
-              {docsLoading ? (
-                <div className="flex items-center gap-2 px-3 py-2 text-xs text-warmgray-400">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.5} />
-                  Loading pages...
-                </div>
-              ) : docTree.length === 0 ? (
-                <div className="px-3 py-3 text-center">
-                  <p className="text-xs text-warmgray-400 mb-2">No pages yet</p>
+          {knowledgeExpanded && (
+            <div className="mt-0.5 space-y-1">
+              {/* My Pages subsection */}
+              <div>
+                <div className="flex items-center justify-between px-2 py-1">
+                  {sectionHeading('My Pages')}
                   <button
                     onClick={handleCreateRootPage}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cream-200/60 text-xs font-medium text-warmgray-500 hover:bg-cream-200 hover:text-ink-600 transition-colors"
+                    disabled={creatingPage}
+                    title="New page"
+                    aria-label="Create new page"
+                    className="w-5 h-5 rounded flex items-center justify-center text-warmgray-400 hover:text-ink-600 hover:bg-cream-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400"
                   >
-                    <Plus className="w-3 h-3" strokeWidth={2} />
-                    Create your first page
+                    {creatingPage
+                      ? <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.5} />
+                      : <Plus className="w-3 h-3" strokeWidth={2} />}
                   </button>
                 </div>
-              ) : (
-                docTree.map((node) => (
-                  <DocumentTreeItem
-                    key={node.doc.id}
-                    node={node}
-                    depth={0}
-                    activeDocumentId={activeDocumentId}
-                    expandedDocs={expandedDocs}
-                    onToggleExpand={toggleDocExpanded}
-                    onNavigate={onNavigateDocument}
-                    onDelete={onDeleteDocument}
-                    onRename={onRenameDocument}
-                    onCreateSubPage={handleCreateSubPage}
-                  />
-                ))
-              )}
+
+                <div className="space-y-0.5">
+                  {docsLoading ? (
+                    <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-warmgray-400">
+                      <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.5} />
+                      Loading pages...
+                    </div>
+                  ) : docTree.length === 0 ? (
+                    <div className="px-3 py-2 text-center">
+                      <p className="text-xs text-warmgray-400 mb-1.5">No pages yet</p>
+                      <button
+                        onClick={handleCreateRootPage}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cream-200/60 text-xs font-medium text-warmgray-500 hover:bg-cream-200 hover:text-ink-600 transition-colors"
+                      >
+                        <Plus className="w-3 h-3" strokeWidth={2} />
+                        New page
+                      </button>
+                    </div>
+                  ) : (
+                    docTree.map((node) => (
+                      <DocumentTreeItem
+                        key={node.doc.id}
+                        node={node}
+                        depth={0}
+                        activeDocumentId={activeDocumentId}
+                        expandedDocs={expandedDocs}
+                        onToggleExpand={toggleDocExpanded}
+                        onNavigate={onNavigateDocument}
+                        onDelete={onDeleteDocument}
+                        onRename={onRenameDocument}
+                        onCreateSubPage={handleCreateSubPage}
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* My Canvases subsection — CanvasSidebarSection owns its own header */}
+              <CanvasSidebarSection
+                canvases={canvases}
+                canvasesLoading={canvasesLoading}
+                activeCanvasId={activeCanvasId}
+                onNavigateCanvas={onNavigateCanvas}
+                onCreateCanvas={onCreateCanvas}
+                onDeleteCanvas={onDeleteCanvas}
+                onRenameCanvas={onRenameCanvas}
+              />
             </div>
           )}
         </div>
-
-        {/* Divider */}
-        <div className="h-px bg-cream-200 my-2" />
-
-        {/* ── MY CANVASES Section ── */}
-        <CanvasSidebarSection
-          canvases={canvases}
-          canvasesLoading={canvasesLoading}
-          activeCanvasId={activeCanvasId}
-          onNavigateCanvas={onNavigateCanvas}
-          onCreateCanvas={onCreateCanvas}
-          onDeleteCanvas={onDeleteCanvas}
-          onRenameCanvas={onRenameCanvas}
-        />
       </nav>
 
       {/* Footer */}
       <div className="px-3 py-3 border-t border-cream-200">
-        <div className="px-3 py-2 mb-1">
+        <div className="px-3 py-1.5 mb-1">
           <p className="text-xs text-warmgray-400 truncate">{userEmail}</p>
         </div>
         <button
           onClick={onSignOut}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-warmgray-500 hover:bg-brick-50 hover:text-brick-500 transition-colors"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-warmgray-500 hover:bg-brick-50 hover:text-brick-500 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brick-400"
         >
-          <LogOut className="w-[18px] h-[18px]" strokeWidth={1.5} />
+          <LogOut className="w-[16px] h-[16px]" strokeWidth={1.5} />
           Sign out
         </button>
       </div>
     </aside>
   );
 }
+
+// ---------- DocumentTreeItem ----------
 
 interface DocumentTreeItemProps {
   node: DocTreeNode;
@@ -376,7 +407,6 @@ function DocumentTreeItem({
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Close menu on outside click
   useEffect(() => {
     if (!showMenu) return;
     const handleClick = (e: MouseEvent) => {
@@ -388,7 +418,6 @@ function DocumentTreeItem({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showMenu]);
 
-  // Focus input when renaming starts
   useEffect(() => {
     if (isRenaming && inputRef.current) {
       inputRef.current.focus();
@@ -407,15 +436,13 @@ function DocumentTreeItem({
   };
 
   const handleRenameKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleRenameSubmit();
-    } else if (e.key === 'Escape') {
+    if (e.key === 'Enter') void handleRenameSubmit();
+    else if (e.key === 'Escape') {
       setRenameValue(doc.title);
       setIsRenaming(false);
     }
   };
 
-  // Indent based on depth (max 4 levels visually)
   const paddingLeft = 12 + Math.min(depth, 4) * 16;
 
   return (
@@ -430,41 +457,36 @@ function DocumentTreeItem({
       >
         {/* Expand/collapse toggle */}
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleExpand(doc.id);
-          }}
+          onClick={(e) => { e.stopPropagation(); onToggleExpand(doc.id); }}
+          aria-label={isExpanded ? 'Collapse' : 'Expand'}
           className={`w-5 h-5 flex items-center justify-center flex-shrink-0 rounded transition-colors ${
-            hasChildren ? 'hover:bg-cream-300/50 text-warmgray-400' : 'text-transparent'
+            hasChildren ? 'hover:bg-cream-300/50 text-warmgray-400' : 'text-transparent pointer-events-none'
           }`}
         >
           {hasChildren && (
-            isExpanded ? (
-              <ChevronDown className="w-3 h-3" strokeWidth={2} />
-            ) : (
-              <ChevronRight className="w-3 h-3" strokeWidth={2} />
-            )
+            isExpanded
+              ? <ChevronDown className="w-3 h-3" strokeWidth={2} />
+              : <ChevronRight className="w-3 h-3" strokeWidth={2} />
           )}
         </button>
 
         {/* Icon + Title */}
         <button
           onClick={() => onNavigate(doc.id)}
-          onDoubleClick={(e) => {
-            e.preventDefault();
-            setIsRenaming(true);
-          }}
-          className="flex-1 flex items-center gap-1.5 py-1.5 pr-1 min-w-0 text-left"
+          onDoubleClick={(e) => { e.preventDefault(); setIsRenaming(true); }}
+          className="flex-1 flex items-center gap-1.5 py-1.5 pr-1 min-w-0 text-left focus-visible:outline-none"
+          aria-current={isActive ? 'page' : undefined}
         >
-          <span className="text-sm flex-shrink-0">{doc.icon || '📝'}</span>
+          <span className="text-sm flex-shrink-0" aria-hidden="true">{doc.icon || '📝'}</span>
           {isRenaming ? (
             <input
               ref={inputRef}
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
-              onBlur={handleRenameSubmit}
+              onBlur={() => void handleRenameSubmit()}
               onKeyDown={handleRenameKeyDown}
               onClick={(e) => e.stopPropagation()}
+              aria-label="Rename page"
               className="flex-1 text-[13px] bg-cream-50 border border-cream-300 rounded px-1.5 py-0.5 text-ink-700 focus:outline-none focus:border-terracotta-300 min-w-0"
             />
           ) : (
@@ -474,53 +496,51 @@ function DocumentTreeItem({
           )}
         </button>
 
-        {/* Context menu trigger — visible on hover */}
+        {/* Hover actions */}
         {!isRenaming && (
           <div className="flex items-center gap-0.5 pr-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onCreateSubPage(doc.id);
-              }}
-              className="w-5 h-5 rounded flex items-center justify-center text-warmgray-400 hover:text-ink-600 hover:bg-cream-300/50 transition-colors"
+              onClick={(e) => { e.stopPropagation(); void onCreateSubPage(doc.id); }}
               title="Add sub-page"
+              aria-label="Add sub-page"
+              className="w-5 h-5 rounded flex items-center justify-center text-warmgray-400 hover:text-ink-600 hover:bg-cream-300/50 transition-colors"
             >
               <FilePlus className="w-3 h-3" strokeWidth={2} />
             </button>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowMenu(!showMenu);
-              }}
-              className="w-5 h-5 rounded flex items-center justify-center text-warmgray-400 hover:text-ink-600 hover:bg-cream-300/50 transition-colors"
+              onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
               title="More options"
+              aria-label="More options"
+              aria-haspopup="true"
+              aria-expanded={showMenu}
+              className="w-5 h-5 rounded flex items-center justify-center text-warmgray-400 hover:text-ink-600 hover:bg-cream-300/50 transition-colors"
             >
               <MoreHorizontal className="w-3 h-3" strokeWidth={2} />
             </button>
           </div>
         )}
 
-        {/* Dropdown menu */}
+        {/* Dropdown */}
         {showMenu && (
           <div
             ref={menuRef}
-            className="absolute right-0 top-full mt-1 w-40 bg-cream-50 border border-cream-200 rounded-xl shadow-lifted z-50 py-1 animate-fade-in-soft"
+            role="menu"
+            className="absolute right-0 top-full mt-1 w-36 bg-cream-50 border border-cream-200 rounded-xl shadow-lifted z-50 py-1 animate-fade-in-soft"
           >
             <button
-              onClick={() => {
-                setShowMenu(false);
-                setIsRenaming(true);
-              }}
+              role="menuitem"
+              onClick={() => { setShowMenu(false); setIsRenaming(true); }}
               className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-warmgray-600 hover:bg-cream-100 hover:text-ink-600 transition-colors"
             >
               <Pencil className="w-3.5 h-3.5" strokeWidth={1.5} />
               Rename
             </button>
             <button
+              role="menuitem"
               onClick={() => {
                 setShowMenu(false);
                 if (confirm('Delete this page? This cannot be undone.')) {
-                  onDelete(doc.id);
+                  void onDelete(doc.id);
                 }
               }}
               className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-brick-500 hover:bg-brick-50 transition-colors"
@@ -532,7 +552,7 @@ function DocumentTreeItem({
         )}
       </div>
 
-      {/* Children (nested pages) */}
+      {/* Children */}
       {isExpanded && hasChildren && (
         <div className="space-y-0.5">
           {children.map((child) => (

@@ -3,6 +3,7 @@ import { Menu, BookOpen } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { AuthPage } from '@/components/AuthPage';
 import { LandingPage } from '@/components/LandingPage';
+import { HomePage } from '@/components/HomePage';
 import { Dashboard } from '@/components/Dashboard';
 import { CourseGenerator } from '@/components/CourseGenerator';
 import { CourseView } from '@/components/CourseView';
@@ -25,9 +26,12 @@ import {
   createCanvas,
   updateCanvas,
   deleteCanvas,
+  generateCourse,
+  type GenerationParams,
 } from '@/lib/api';
 
 type View =
+  | { name: 'home' }
   | { name: 'dashboard' }
   | { name: 'generate' }
   | { name: 'course'; courseId: string }
@@ -39,7 +43,7 @@ type View =
 function App() {
   const { user, loading, signInWithEmail, signUpWithEmail, signInWithGoogle, signOut } = useAuth();
   const userId = user?.id;
-  const [view, setView] = useState<View>({ name: 'dashboard' });
+  const [view, setView] = useState<View>({ name: 'home' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
 
@@ -53,6 +57,10 @@ function App() {
   const [dashboardProgress, setDashboardProgress] = useState<CourseWithProgress[]>([]);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardHasLoaded, setDashboardHasLoaded] = useState(false);
+
+  // Home page generation state (drives the inline generator on HomePage)
+  const [homeGenerating, setHomeGenerating] = useState(false);
+  const [homeGenerationError, setHomeGenerationError] = useState('');
 
   // Load documents, courses, and canvases
   useEffect(() => {
@@ -129,7 +137,7 @@ function App() {
     try {
       await deleteDocument(id);
       setDocuments(prev => prev.filter(d => d.id !== id));
-      navigate({ name: 'dashboard' });
+      navigate({ name: 'home' });
     } catch (err) {
       console.error('Failed to delete document:', err);
     }
@@ -194,9 +202,32 @@ function App() {
     window.scrollTo({ top: 0 });
   }, []);
 
+  const handleHomeGenerate = useCallback(async (topic: string, goal: string) => {
+    setHomeGenerationError('');
+    setHomeGenerating(true);
+    const params: GenerationParams = {
+      topic,
+      knowledge_level: 'Beginner',
+      goal: goal || 'Gain a solid understanding of the topic',
+      time_commitment: '30 min/day',
+      difficulty: 'Medium',
+    };
+    const result = await generateCourse(params);
+    setHomeGenerating(false);
+    if ('error' in result) {
+      setHomeGenerationError(result.error);
+    } else {
+      // Refresh courses list so the new course appears in sidebar/library
+      fetchCourses()
+        .then(setCourses)
+        .catch(err => console.error('Failed to refresh courses after generation:', err));
+      navigate({ name: 'course', courseId: result.courseId });
+    }
+  }, [navigate]);
+
   useEffect(() => {
-    if (userId && view.name === 'dashboard') {
-      // Refresh courses when returning to dashboard
+    if (userId && (view.name === 'dashboard' || view.name === 'home')) {
+      // Refresh courses when returning to dashboard or home
       fetchCourses()
         .then(setCourses)
         .catch(err => console.error('Failed to refresh courses:', err));
@@ -204,7 +235,7 @@ function App() {
   }, [userId, view.name]);
 
   useEffect(() => {
-    if (userId && view.name === 'dashboard' && !coursesLoading) {
+    if (userId && (view.name === 'dashboard' || view.name === 'home') && !coursesLoading) {
       void loadDashboardProgress(courses);
     }
   }, [userId, view.name, courses, coursesLoading, loadDashboardProgress]);
@@ -236,6 +267,30 @@ function App() {
 
   const renderContent = () => {
     switch (view.name) {
+      case 'home':
+        return (
+          <HomePage
+            userEmail={user.email || ''}
+            dashboardProgress={dashboardProgress}
+            dashboardLoading={dashboardLoading}
+            dashboardHasLoaded={dashboardHasLoaded}
+            documents={documents}
+            docsLoading={docsLoading}
+            canvases={canvases}
+            canvasesLoading={canvasesLoading}
+            onOpenCourse={(courseId) => navigate({ name: 'course', courseId })}
+            onNavigateCourses={() => navigate({ name: 'dashboard' })}
+            onNavigateGenerate={() => navigate({ name: 'generate' })}
+            onGenerateCourse={handleHomeGenerate}
+            generatingCourse={homeGenerating}
+            generationError={homeGenerationError}
+            onOpenDocument={(documentId) => navigate({ name: 'document', documentId })}
+            onCreateDocument={async (title) => { await handleCreateDocumentSimple(title); }}
+            onOpenCanvas={(canvasId) => navigate({ name: 'canvas', canvasId })}
+            onCreateCanvas={handleCreateCanvas}
+          />
+        );
+
       case 'dashboard':
         return (
           <Dashboard
@@ -335,6 +390,7 @@ function App() {
       <Sidebar
         sidebarOpen={sidebarOpen}
         onCloseSidebar={() => setSidebarOpen(false)}
+        onNavigateHome={() => navigate({ name: 'home' })}
         onNavigateDashboard={() => navigate({ name: 'dashboard' })}
         onNavigateGenerate={() => navigate({ name: 'generate' })}
         onNavigateCourse={(courseId) => navigate({ name: 'course', courseId })}
