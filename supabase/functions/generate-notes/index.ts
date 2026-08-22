@@ -1,14 +1,11 @@
 /**
  * generate-notes edge function
  *
- * Handles two actions:
- *  1. "save_to_page"  — takes user-selected lesson text and appends it to the
- *                       linked knowledge page under the appropriate section.
- *  2. "generate_section" — AI-generates a named section (e.g. "Key Concepts",
- *                          "Examples") from lesson metadata and appends it to
- *                          the knowledge page. Never overwrites existing content.
+ * Handles one action:
+ *  "save_to_page" — takes user-selected lesson text and appends it to the
+ *                   linked knowledge page under the appropriate section.
  *
- * In both cases the function:
+ * In doing so the function:
  *  - Validates the JWT
  *  - Verifies the document belongs to the authenticated user
  *  - Appends content (never replaces) so user edits are always preserved
@@ -24,59 +21,12 @@ const corsHeaders = {
     "Content-Type, Authorization, x-client-info, apikey",
 };
 
-const GEMINI_MODEL = "gemini-1.5-flash";
-
 interface SaveToPageRequest {
   action: "save_to_page";
   documentId: string;       // knowledge page id
   selectedText: string;     // user-selected content from lesson
   sectionHint: string;      // "My Notes" | "Key Concepts" | "Examples" | etc.
   sourceLabel: string;      // e.g. "Docker Fundamentals → Module 3 → Docker Networking"
-}
-
-interface GenerateSectionRequest {
-  action: "generate_section";
-  documentId: string;       // knowledge page id
-  sectionName: string;      // which section to generate
-  lessonTitle: string;
-  lessonSubtitle: string;
-  keyTakeaways: string[];
-  learningObjectives: string[];
-  courseTitle: string;
-}
-
-type RequestBody = SaveToPageRequest | GenerateSectionRequest;
-
-async function callGemini(
-  apiKey: string,
-  systemPrompt: string,
-  userPrompt: string,
-): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ parts: [{ text: userPrompt }] }],
-      generationConfig: {
-        temperature: 0.5,
-        maxOutputTokens: 1024,
-      },
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    console.error("Gemini error:", res.status, err);
-    throw new Error(`Gemini error ${res.status}`);
-  }
-
-  const data = await res.json();
-  const text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  if (!text) throw new Error("Gemini returned empty response");
-  return text.trim();
 }
 
 /**
@@ -136,9 +86,8 @@ Deno.serve(async (req: Request) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
 
-    if (!supabaseUrl || !supabaseServiceKey || !geminiApiKey) {
+    if (!supabaseUrl || !supabaseServiceKey) {
       return new Response(JSON.stringify({ error: "Server configuration error" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -158,7 +107,14 @@ Deno.serve(async (req: Request) => {
     }
     const userId = userData.user.id;
 
-    const body: RequestBody = await req.json();
+    const body: SaveToPageRequest = await req.json();
+
+    if (body.action !== "save_to_page") {
+      return new Response(JSON.stringify({ error: "Unknown action" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Fetch current document (RLS bypassed — we verify ownership manually)
     const { data: docRow, error: docError } = await supabase
@@ -183,74 +139,26 @@ Deno.serve(async (req: Request) => {
     }
 
     const currentContent: string = ((docRow as Record<string, unknown>).content as string) || "";
-    let updatedContent = currentContent;
 
-    if (body.action === "save_to_page") {
-      // ── Save selected text to a section ──────────────────────────────────
-      const { selectedText, sectionHint, sourceLabel } = body as SaveToPageRequest;
+    // ── Append selected text to the requested section ─────────────────────────
+    const { selectedText, sectionHint, sourceLabel } = body;
 
-      if (!selectedText.trim()) {
-        return new Response(JSON.stringify({ error: "No text selected" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      // Format the block with source attribution
-      const timestamp = new Date().toLocaleDateString("en-US", {
-        month: "short", day: "numeric", year: "numeric",
-      });
-      const block =
-        `> ${selectedText.trim()}\n` +
-        `> *Source: ${sourceLabel} · ${timestamp}*`;
-
-      updatedContent = appendUnderSection(currentContent, sectionHint, block);
-
-    } else if (body.action === "generate_section") {
-      // ── AI-generate a section and append it ──────────────────────────────
-      const {
-        sectionName,
-        lessonTitle,
-        lessonSubtitle,
-        keyTakeaways,
-        learningObjectives,
-        courseTitle,
-      } = body as GenerateSectionRequest;
-
-      const systemPrompt =
-        "You are a concise knowledge-base author. Write plain Markdown bullet points only — " +
-        "no introduction, no conclusion, no headings. Each bullet on its own line starting with '- '.";
-
-      const userPrompt =
-        `Course: ${courseTitle}\n` +
-        `Lesson: ${lessonTitle} — ${lessonSubtitle}\n` +
-        `Learning objectives: ${learningObjectives.join("; ")}\n` +
-        `Key takeaways: ${keyTakeaways.join("; ")}\n\n` +
-        `Generate 4-6 concise Markdown bullet points for the "${sectionName}" section ` +
-        `of the student's personal knowledge page. Be specific and actionable. ` +
-        `Do not repeat the learning objectives verbatim. Plain Markdown only.`;
-
-      const generated = await callGemini(geminiApiKey, systemPrompt, userPrompt);
-
-      // Strip any accidental heading lines the model might have added
-      const cleanedLines = generated
-        .split("\n")
-        .filter((l) => !l.startsWith("#"))
-        .join("\n")
-        .trim();
-
-      // Add attribution comment
-      const block =
-        `<!-- AI-generated from: ${lessonTitle} -->\n` +
-        cleanedLines;
-
-      updatedContent = appendUnderSection(currentContent, sectionName, block);
-    } else {
-      return new Response(JSON.stringify({ error: "Unknown action" }), {
+    if (!selectedText.trim()) {
+      return new Response(JSON.stringify({ error: "No text selected" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Format the block with source attribution
+    const timestamp = new Date().toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: "numeric",
+    });
+    const block =
+      `> ${selectedText.trim()}\n` +
+      `> *Source: ${sourceLabel} · ${timestamp}*`;
+
+    const updatedContent = appendUnderSection(currentContent, sectionHint, block);
 
     // Persist updated content
     const { data: updatedDoc, error: updateError } = await supabase

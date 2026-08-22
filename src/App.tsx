@@ -5,7 +5,6 @@ import { AuthPage } from '@/components/AuthPage';
 import { LandingPage } from '@/components/LandingPage';
 import { HomePage } from '@/components/HomePage';
 import { Dashboard } from '@/components/Dashboard';
-import { CourseGenerator } from '@/components/CourseGenerator';
 import { CourseView } from '@/components/CourseView';
 import { LessonView } from '@/components/LessonView';
 import { ProgressView } from '@/components/ProgressView';
@@ -27,13 +26,13 @@ import {
   updateCanvas,
   deleteCanvas,
   generateCourse,
+  waitForCourseDocument,
   type GenerationParams,
 } from '@/lib/api';
 
 type View =
   | { name: 'home' }
   | { name: 'dashboard' }
-  | { name: 'generate' }
   | { name: 'course'; courseId: string }
   | { name: 'lesson'; courseId: string; lessonId: string }
   | { name: 'progress' }
@@ -202,29 +201,45 @@ function App() {
     window.scrollTo({ top: 0 });
   }, []);
 
-  const handleHomeGenerate = useCallback(async (topic: string, goal: string) => {
+  const handleHomeGenerate = useCallback(async (
+    topic: string,
+    goal: string,
+    knowledgeLevel: string,
+    timeCommitment: string,
+    difficulty: string,
+    includeKnowledgePage: boolean
+  ) => {
     setHomeGenerationError('');
     setHomeGenerating(true);
     const params: GenerationParams = {
       topic,
-      knowledge_level: 'Beginner',
+      knowledge_level: knowledgeLevel,
       goal: goal || 'Gain a solid understanding of the topic',
-      time_commitment: '30 min/day',
-      difficulty: 'Medium',
+      time_commitment: timeCommitment,
+      difficulty,
+      include_knowledge_page: includeKnowledgePage,
     };
     const result = await generateCourse(params);
     setHomeGenerating(false);
     if ('error' in result) {
       setHomeGenerationError(result.error);
     } else {
-      // Refresh courses and documents so the new course + knowledge page
-      // appear in the sidebar immediately.
+      // The course is persisted before the response returns, so refresh
+      // courses immediately.
       fetchCourses()
         .then(setCourses)
         .catch(err => console.error('Failed to refresh courses after generation:', err));
-      fetchDocuments()
-        .then(setDocuments)
-        .catch(err => console.error('Failed to refresh documents after generation:', err));
+
+      if (includeKnowledgePage) {
+        // The knowledge page is generated server-side in the background
+        // AFTER this response, so poll for it instead of refetching once —
+        // a single immediate fetch would race the background insert.
+        waitForCourseDocument(result.courseId)
+          .then((doc) => (doc ? fetchDocuments() : null))
+          .then((docs) => { if (docs) setDocuments(docs); })
+          .catch((err) => console.error('Failed to load knowledge page after generation:', err));
+      }
+
       navigate({ name: 'course', courseId: result.courseId });
     }
   }, [navigate]);
@@ -284,7 +299,6 @@ function App() {
             canvasesLoading={canvasesLoading}
             onOpenCourse={(courseId) => navigate({ name: 'course', courseId })}
             onNavigateCourses={() => navigate({ name: 'dashboard' })}
-            onNavigateGenerate={() => navigate({ name: 'generate' })}
             onGenerateCourse={handleHomeGenerate}
             generatingCourse={homeGenerating}
             generationError={homeGenerationError}
@@ -299,7 +313,7 @@ function App() {
         return (
           <Dashboard
             onOpenCourse={(courseId) => navigate({ name: 'course', courseId })}
-            onGenerate={() => navigate({ name: 'generate' })}
+            onGenerate={() => navigate({ name: 'home' })}
             onProgress={() => navigate({ name: 'progress' })}
             onDeleteCourse={handleDeleteCourse}
             courses={courses}
@@ -307,32 +321,6 @@ function App() {
             dashboardProgress={dashboardProgress}
             dashboardLoading={dashboardLoading}
             dashboardHasLoaded={dashboardHasLoaded}
-          />
-        );
-
-      case 'generate':
-        return (
-          <CourseGenerator
-            onGenerated={(courseId, pageId) => {
-              // Refresh courses + documents so sidebar reflects new items
-              fetchCourses()
-                .then(setCourses)
-                .catch(err => console.error('Failed to refresh courses after generation:', err));
-              fetchDocuments()
-                .then(setDocuments)
-                .catch(err => console.error('Failed to refresh documents after generation:', err));
-              navigate({ name: 'course', courseId });
-              // pageId is available but we navigate to the course first;
-              // the user can open the page from CourseView's button.
-              void pageId; // acknowledge it without suppressing the lint rule
-            }}
-            onOpenPage={(pageId) => {
-              fetchDocuments()
-                .then(setDocuments)
-                .catch(err => console.error('Failed to refresh documents:', err));
-              navigate({ name: 'document', documentId: pageId });
-            }}
-            onCancel={() => navigate({ name: 'home' })}
           />
         );
 
@@ -407,13 +395,6 @@ function App() {
                 ? (courseId) => navigate({ name: 'course', courseId })
                 : undefined
             }
-            onPageUpdated={(doc) => {
-              setDocuments((prev) =>
-                prev.some((d) => d.id === doc.id)
-                  ? prev.map((d) => (d.id === doc.id ? doc : d))
-                  : [...prev, doc],
-              );
-            }}
           />
         );
       }
@@ -440,7 +421,6 @@ function App() {
         onCloseSidebar={() => setSidebarOpen(false)}
         onNavigateHome={() => navigate({ name: 'home' })}
         onNavigateDashboard={() => navigate({ name: 'dashboard' })}
-        onNavigateGenerate={() => navigate({ name: 'generate' })}
         onNavigateCourse={(courseId) => navigate({ name: 'course', courseId })}
         onNavigateDocument={(documentId) => navigate({ name: 'document', documentId })}
         onNavigateCanvas={(canvasId) => navigate({ name: 'canvas', canvasId })}

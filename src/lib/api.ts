@@ -212,6 +212,8 @@ export interface GenerationParams {
   goal: string;
   time_commitment: string;
   difficulty: string;
+  /** Whether to also generate a knowledge page for the course (default: true) */
+  include_knowledge_page?: boolean;
 }
 
 export async function generateCourse(
@@ -223,28 +225,48 @@ export async function generateCourse(
     if (!token) return { error: 'Not authenticated' };
 
     const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-course`;
-    const response = await fetch(functionUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(params),
-    });
+    
+    // Create abort controller for timeout (150 seconds matches Supabase's
+    // hard idle timeout, so we always get a clean error rather than a hang)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 150000);
+    
+    try {
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(params),
+        signal: controller.signal,
+      });
 
-    const result = await response.json();
+      const result = await response.json();
+      // Clear only after the body is fully read so the abort signal also
+      // covers a hung response body, not just the headers.
+      clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      return { error: result.error || 'Generation failed' };
+      if (!response.ok) {
+        console.error('Course generation failed:', result);
+        return { error: result.error || 'Generation failed' };
+      }
+
+      return {
+        courseId: result.courseId as string,
+        // pageId is null when the knowledge-page generation step failed gracefully
+        pageId: (result.pageId as string | null) ?? null,
+      };
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        return { error: 'Request timed out. Please try again.' };
+      }
+      throw fetchError;
     }
-
-    return {
-      courseId: result.courseId as string,
-      // pageId is null when the knowledge-page generation step failed gracefully
-      pageId: (result.pageId as string | null) ?? null,
-    };
-  } catch {
-    return { error: 'Failed to connect to AI service' };
+  } catch (error) {
+    console.error('Course generation error:', error);
+    return { error: 'Failed to connect to AI service. Please check your connection and try again.' };
   }
 }
 
@@ -268,6 +290,27 @@ export async function fetchDocumentByCourseId(
     return null;
   }
   return (data as AppDocument | null) ?? null;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Poll for the knowledge page linked to a course until it exists.
+ * The page is generated in the background by the edge function after the
+ * course response returns, so it may land several seconds later.
+ * Returns null if no document appears within the timeout.
+ */
+export async function waitForCourseDocument(
+  courseId: string,
+  { intervalMs = 4000, timeoutMs = 60000 } = {},
+): Promise<AppDocument | null> {
+  const deadline = Date.now() + timeoutMs;
+  let doc = await fetchDocumentByCourseId(courseId);
+  while (!doc && Date.now() < deadline) {
+    await sleep(intervalMs);
+    doc = await fetchDocumentByCourseId(courseId);
+  }
+  return doc;
 }
 
 // ─── generate-notes edge function client helpers ─────────────────────────────
@@ -300,46 +343,6 @@ export async function saveToPage(
     });
     const json = await res.json();
     if (!res.ok) return { error: json.error || 'Failed to save to page' };
-    return json.document as AppDocument;
-  } catch {
-    return { error: 'Failed to connect to server' };
-  }
-}
-
-/**
- * AI-generates bullet points for a named section and appends them.
- * Never overwrites existing content.
- * Returns the updated AppDocument or an error string.
- */
-export async function generateNotesSection(
-  documentId: string,
-  sectionName: string,
-  lessonTitle: string,
-  lessonSubtitle: string,
-  keyTakeaways: string[],
-  learningObjectives: string[],
-  courseTitle: string,
-): Promise<AppDocument | { error: string }> {
-  const token = await getAuthToken();
-  if (!token) return { error: 'Not authenticated' };
-
-  try {
-    const res = await fetch(NOTES_FUNCTION_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        action: 'generate_section',
-        documentId,
-        sectionName,
-        lessonTitle,
-        lessonSubtitle,
-        keyTakeaways,
-        learningObjectives,
-        courseTitle,
-      }),
-    });
-    const json = await res.json();
-    if (!res.ok) return { error: json.error || 'Failed to generate notes' };
     return json.document as AppDocument;
   } catch {
     return { error: 'Failed to connect to server' };

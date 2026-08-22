@@ -10,6 +10,9 @@ import {
   Loader2,
   GraduationCap,
   StickyNote,
+  ChevronDown,
+  Target,
+  BarChart3,
 } from 'lucide-react';
 import type { AppDocument, CourseWithProgress } from '@/types';
 import type { CanvasDocument } from '@/types/canvas';
@@ -17,7 +20,7 @@ import { COURSE_COLOR_GRADIENTS } from '@/lib/courseColors';
 
 // ─── Intent Types ────────────────────────────────────────────────────────────
 
-type LearningIntent = 'course' | 'notes' | 'practice' | 'page' | 'canvas';
+type LearningIntent = 'course' | 'course+page' | 'notes' | 'practice' | 'page' | 'canvas';
 
 interface Intent {
   id: LearningIntent;
@@ -25,6 +28,7 @@ interface Intent {
   description: string;
   icon: React.ReactNode;
   available: boolean;
+  recommended?: boolean;
 }
 
 // ─── Props ───────────────────────────────────────────────────────────────────
@@ -41,8 +45,14 @@ interface HomePageProps {
   // Navigation callbacks
   onOpenCourse: (courseId: string) => void;
   onNavigateCourses: () => void;
-  onNavigateGenerate: () => void;
-  onGenerateCourse: (topic: string, goal: string) => void;
+  onGenerateCourse: (
+    topic: string,
+    goal: string,
+    knowledgeLevel: string,
+    timeCommitment: string,
+    difficulty: string,
+    includeKnowledgePage: boolean
+  ) => void;
   generatingCourse: boolean;
   generationError: string;
   onOpenDocument: (documentId: string) => void;
@@ -64,38 +74,32 @@ function getGreeting(email: string): string {
 
 const INTENTS: Intent[] = [
   {
+    id: 'course+page',
+    label: 'Course + Knowledge',
+    description: 'Full course with reference page',
+    icon: <><GraduationCap className="w-4 h-4" strokeWidth={1.5} /><FileText className="w-3 h-3 -ml-1" strokeWidth={1.5} /></>,
+    available: true,
+    recommended: true,
+  },
+  {
     id: 'course',
-    label: 'Learn this',
-    description: 'Full structured course',
+    label: 'Course',
+    description: 'Structured learning path',
     icon: <GraduationCap className="w-4 h-4" strokeWidth={1.5} />,
     available: true,
   },
   {
     id: 'notes',
-    label: 'Understand this',
-    description: 'Summary notes',
+    label: 'Notes',
+    description: 'Quick summary',
     icon: <StickyNote className="w-4 h-4" strokeWidth={1.5} />,
     available: false,
   },
   {
     id: 'practice',
-    label: 'Practice this',
+    label: 'Practice',
     description: 'Quiz & exercises',
     icon: <Sparkles className="w-4 h-4" strokeWidth={1.5} />,
-    available: false,
-  },
-  {
-    id: 'page',
-    label: 'Organise this',
-    description: 'Knowledge page',
-    icon: <FileText className="w-4 h-4" strokeWidth={1.5} />,
-    available: false,
-  },
-  {
-    id: 'canvas',
-    label: 'Explore visually',
-    description: 'Canvas diagram',
-    icon: <Pencil className="w-4 h-4" strokeWidth={1.5} />,
     available: false,
   },
 ];
@@ -230,7 +234,6 @@ export function HomePage({
   canvasesLoading,
   onOpenCourse,
   onNavigateCourses,
-  onNavigateGenerate,
   onGenerateCourse,
   generatingCourse,
   generationError,
@@ -240,8 +243,16 @@ export function HomePage({
   onCreateCanvas,
 }: HomePageProps) {
   const [input, setInput] = useState('');
-  const [intent, setIntent] = useState<LearningIntent>('course');
+  const [intent, setIntent] = useState<LearningIntent>('course+page');
   const [showIntentPicker, setShowIntentPicker] = useState(false);
+  const [showCustomize, setShowCustomize] = useState(false);
+  
+  // Customization fields
+  const [knowledgeLevel, setKnowledgeLevel] = useState('Beginner');
+  const [goal, setGoal] = useState('');
+  const [timeCommitment, setTimeCommitment] = useState('30 min/day');
+  const [difficulty, setDifficulty] = useState('Medium');
+  
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-grow textarea
@@ -266,12 +277,19 @@ export function HomePage({
 
   const handleSubmit = () => {
     if (!input.trim() || generatingCourse) return;
-    if (intent === 'course') {
-      onGenerateCourse(input.trim(), '');
-    } else {
-      // Future modes: for now fall back to course generation
-      onGenerateCourse(input.trim(), '');
-    }
+
+    // 'course+page' also generates a knowledge page; plain 'course' skips it.
+    // Unavailable intents are disabled in the picker and can't be selected.
+    const finalGoal = goal.trim() || 'Gain a solid understanding of the topic';
+
+    onGenerateCourse(
+      input.trim(),
+      finalGoal,
+      knowledgeLevel,
+      timeCommitment,
+      difficulty,
+      intent === 'course+page'
+    );
   };
 
   const handleExampleClick = (example: string) => {
@@ -302,7 +320,7 @@ export function HomePage({
   const showContinueLearning = dashboardHasLoaded && recentCourses.length > 0;
   const loadingContinue = dashboardLoading && !dashboardHasLoaded;
 
-  // Generative loading state — hand off entirely to CourseGenerator's loading screen
+  // Generative loading state — replaces the whole page while generating
   if (generatingCourse) {
     return (
       <div className="max-w-lg mx-auto py-24 text-center animate-fade-in">
@@ -349,34 +367,142 @@ export function HomePage({
 
           {/* Intent picker — revealed when input is non-empty */}
           {showIntentPicker && (
-            <div className="px-5 pb-3 animate-fade-in" role="group" aria-label="What would you like to create?">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-warmgray-400 mb-2.5">
-                What would you like to do?
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {INTENTS.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    disabled={!item.available}
-                    onClick={() => setIntent(item.id)}
-                    title={item.available ? item.description : `${item.description} — coming soon`}
-                    aria-pressed={intent === item.id}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-1 ${
-                      !item.available
-                        ? 'opacity-40 cursor-not-allowed text-warmgray-400 bg-cream-100 border border-cream-200'
-                        : intent === item.id
-                        ? 'bg-terracotta-500 text-cream-50 shadow-soft'
-                        : 'bg-cream-200 text-warmgray-600 hover:bg-cream-300 hover:text-ink-600'
-                    }`}
-                  >
-                    {item.icon}
-                    {item.label}
-                    {!item.available && (
-                      <span className="text-[10px] font-normal opacity-70 ml-0.5">Soon</span>
-                    )}
-                  </button>
-                ))}
+            <div className="px-5 pb-3 animate-fade-in space-y-3">
+              <div role="group" aria-label="What would you like to create?">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-warmgray-400 mb-2.5">
+                  What would you like to create?
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {INTENTS.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      disabled={!item.available}
+                      onClick={() => setIntent(item.id)}
+                      title={item.available ? item.description : `${item.description} — coming soon`}
+                      aria-pressed={intent === item.id}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-1 ${
+                        !item.available
+                          ? 'opacity-40 cursor-not-allowed text-warmgray-400 bg-cream-100 border border-cream-200'
+                          : intent === item.id
+                          ? 'bg-terracotta-500 text-cream-50 shadow-soft'
+                          : 'bg-cream-200 text-warmgray-600 hover:bg-cream-300 hover:text-ink-600'
+                      }`}
+                    >
+                      {item.icon}
+                      {item.label}
+                      {item.recommended && intent !== item.id && (
+                        <span className="text-[10px] font-normal bg-gold-100 text-gold-700 px-1.5 py-0.5 rounded">
+                          Recommended
+                        </span>
+                      )}
+                      {!item.available && (
+                        <span className="text-[10px] font-normal opacity-70 ml-0.5">Soon</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Personalization section with progressive disclosure */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowCustomize(!showCustomize)}
+                  className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-warmgray-400 hover:text-warmgray-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 rounded"
+                >
+                  <span>Personalize your learning</span>
+                  <ChevronDown
+                    className={`w-3 h-3 transition-transform ${showCustomize ? 'rotate-180' : ''}`}
+                    strokeWidth={2.5}
+                  />
+                </button>
+
+                {showCustomize && (
+                  <div className="mt-3 space-y-4 animate-fade-in">
+                    {/* Knowledge Level */}
+                    <div>
+                      <label className="block text-xs font-semibold text-ink-600 mb-2">
+                        <BarChart3 className="w-3 h-3 inline mr-1 -mt-0.5" strokeWidth={1.5} />
+                        Current Knowledge Level
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['Beginner', 'Intermediate', 'Advanced'].map((level) => (
+                          <button
+                            key={level}
+                            type="button"
+                            onClick={() => setKnowledgeLevel(level)}
+                            className={`py-2 rounded-lg text-xs font-medium transition-colors ${
+                              knowledgeLevel === level
+                                ? 'bg-terracotta-500 text-cream-50 shadow-soft'
+                                : 'bg-cream-100 border border-cream-200 text-warmgray-500 hover:bg-cream-200'
+                            }`}
+                          >
+                            {level}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Goal */}
+                    <div>
+                      <label className="block text-xs font-semibold text-ink-600 mb-2">
+                        <Target className="w-3 h-3 inline mr-1 -mt-0.5" strokeWidth={1.5} />
+                        Goal <span className="text-warmgray-300 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={goal}
+                        onChange={(e) => setGoal(e.target.value)}
+                        placeholder="e.g. Deploy a Next.js application"
+                        className="w-full px-3 py-2 rounded-lg bg-cream-100 border border-cream-200 text-xs text-ink-600 placeholder:text-warmgray-300 focus:outline-none focus:border-sand-300 focus:bg-cream-50 transition-colors"
+                      />
+                    </div>
+
+                    {/* Time + Difficulty */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-ink-600 mb-2">
+                          <Clock className="w-3 h-3 inline mr-1 -mt-0.5" strokeWidth={1.5} />
+                          Time Commitment
+                        </label>
+                        <select
+                          value={timeCommitment}
+                          onChange={(e) => setTimeCommitment(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg bg-cream-100 border border-cream-200 text-xs text-ink-600 focus:outline-none focus:border-sand-300 focus:bg-cream-50 transition-colors cursor-pointer"
+                        >
+                          <option value="15 min/day">15 min/day</option>
+                          <option value="30 min/day">30 min/day</option>
+                          <option value="1 hour/day">1 hour/day</option>
+                          <option value="2+ hours/day">2+ hours/day</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-ink-600 mb-2">
+                          <BarChart3 className="w-3 h-3 inline mr-1 -mt-0.5" strokeWidth={1.5} />
+                          Difficulty
+                        </label>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {['Easy', 'Medium', 'Hard'].map((d) => (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => setDifficulty(d)}
+                              className={`py-2 rounded-lg text-[11px] font-medium transition-colors ${
+                                difficulty === d
+                                  ? 'bg-terracotta-500 text-cream-50 shadow-soft'
+                                  : 'bg-cream-100 border border-cream-200 text-warmgray-500 hover:bg-cream-200'
+                              }`}
+                            >
+                              {d}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -437,7 +563,11 @@ export function HomePage({
           <QuickActionTile
             icon={<BookOpen className="w-5 h-5" strokeWidth={1.5} />}
             label="New Course"
-            onClick={onNavigateGenerate}
+            onClick={() => {
+              // Scroll to top to focus on the input
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+              textareaRef.current?.focus();
+            }}
           />
           <QuickActionTile
             icon={<FileText className="w-5 h-5" strokeWidth={1.5} />}

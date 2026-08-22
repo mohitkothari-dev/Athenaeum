@@ -18,7 +18,6 @@ interface SidebarProps {
   // Navigation
   onNavigateHome: () => void;
   onNavigateDashboard: () => void;
-  onNavigateGenerate: () => void;
   onNavigateCourse: (courseId: string) => void;
   onNavigateDocument: (documentId: string) => void;
   onNavigateCanvas: (canvasId: string) => void;
@@ -105,7 +104,6 @@ export function Sidebar({
   onCloseSidebar,
   onNavigateHome,
   onNavigateDashboard,
-  onNavigateGenerate,
   onNavigateCourse,
   onNavigateDocument,
   onNavigateCanvas,
@@ -255,15 +253,6 @@ export function Sidebar({
                 })
               )}
 
-              {/* New Course */}
-              <button
-                onClick={onNavigateGenerate}
-                className={navItemClass(activeView === 'generate')}
-                aria-current={activeView === 'generate' ? 'page' : undefined}
-              >
-                <Plus className="w-[15px] h-[15px]" strokeWidth={1.5} />
-                New Course
-              </button>
             </div>
           )}
         </div>
