@@ -1,15 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   ArrowLeft, ArrowRight, Clock, CheckCircle, BookOpen,
   Zap, Smile, Layers, ListChecks, Wrench, Loader2,
   Check, X, RotateCw, Target, Lightbulb, FileText,
-  BookMarked, Sparkles, ChevronDown,
+  BookMarked,
 } from 'lucide-react';
 import type { Course, Module, Lesson, LearningMode, AppDocument } from '@/types';
 import {
   fetchCourseWithModules, fetchLessonProgress, updateLessonProgress,
   saveQuizResult, recordFlashcardReview,
-  fetchDocumentByCourseId, saveToPage, generateNotesSection,
+  fetchDocumentByCourseId, waitForCourseDocument, saveToPage,
 } from '@/lib/api';
 
 interface LessonViewProps {
@@ -43,14 +43,6 @@ const PAGE_SECTIONS = [
   'Resources',
 ];
 
-// AI generate-section options shown in the panel
-const AI_SECTION_OPTIONS = [
-  { label: 'Key Concepts',    section: 'Key Concepts'    },
-  { label: 'Examples',        section: 'Examples'        },
-  { label: 'Common Mistakes', section: 'Common Mistakes' },
-  { label: 'Revision Notes',  section: 'My Notes'        },
-];
-
 export function LessonView({
   courseId, lessonId, onBack, onOpenLesson, onPageUpdated, onOpenPage,
 }: LessonViewProps) {
@@ -72,25 +64,6 @@ export function LessonView({
   const [saving,         setSaving       ] = useState(false);
   const [saveMsg,        setSaveMsg      ] = useState<string | null>(null);
   const [saveError,      setSaveError    ] = useState('');
-
-  // AI generate state
-  const [aiGenerating,   setAiGenerating ] = useState(false);
-  const [aiMsg,          setAiMsg        ] = useState<string | null>(null);
-  const [aiError,        setAiError      ] = useState('');
-  const [showAiDropdown, setShowAiDropdown] = useState(false);
-  const aiDropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close AI dropdown on outside click
-  useEffect(() => {
-    if (!showAiDropdown) return;
-    const handler = (e: MouseEvent) => {
-      if (aiDropdownRef.current && !aiDropdownRef.current.contains(e.target as Node)) {
-        setShowAiDropdown(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showAiDropdown]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -117,6 +90,19 @@ export function LessonView({
   }, [courseId, lessonId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // The knowledge page is generated in the background after the course is
+  // created, so poll briefly for it when the initial fetch missed it.
+  useEffect(() => {
+    if (loading || knowledgePage) return;
+    let cancelled = false;
+    waitForCourseDocument(courseId).then((page) => {
+      if (!cancelled && page) setKnowledgePage(page);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [courseId, loading, knowledgePage]);
 
   // Auto-mark in-progress on first open
   useEffect(() => {
@@ -162,35 +148,6 @@ export function LessonView({
       setSaveMsg(`Saved to "${saveSection}"`);
       setSelectedText('');
       setTimeout(() => setSaveMsg(null), 3000);
-    }
-  };
-
-  // ── AI Generate Section ───────────────────────────────────────────────────
-  const handleAiGenerate = async (section: string) => {
-    if (!knowledgePage || !lesson || !course) return;
-    setShowAiDropdown(false);
-    setAiGenerating(true);
-    setAiError('');
-
-    const result = await generateNotesSection(
-      knowledgePage.id,
-      section,
-      lesson.title,
-      lesson.subtitle,
-      lesson.key_takeaways,
-      lesson.learning_objectives,
-      course.title,
-    );
-
-    setAiGenerating(false);
-
-    if ('error' in result) {
-      setAiError(result.error);
-    } else {
-      setKnowledgePage(result);
-      onPageUpdated?.(result);
-      setAiMsg(`Added to "${section}"`);
-      setTimeout(() => setAiMsg(null), 3000);
     }
   };
 
@@ -330,37 +287,6 @@ export function LessonView({
               <span className="text-warmgray-400">— your knowledge page</span>
             </div>
             <div className="flex items-center gap-2">
-              {/* AI Generate button with dropdown */}
-              <div className="relative" ref={aiDropdownRef}>
-                <button
-                  onClick={() => setShowAiDropdown((v) => !v)}
-                  disabled={aiGenerating}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-terracotta-50 border border-terracotta-100 text-xs font-medium text-terracotta-600 hover:bg-terracotta-100 transition-colors disabled:opacity-50"
-                  aria-label="AI generate notes options"
-                >
-                  {aiGenerating
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.5} />
-                    : <Sparkles className="w-3.5 h-3.5" strokeWidth={1.5} />}
-                  Generate notes
-                  <ChevronDown className="w-3 h-3" strokeWidth={2} />
-                </button>
-
-                {showAiDropdown && (
-                  <div className="absolute right-0 top-full mt-1 w-48 bg-cream-50 border border-cream-200 rounded-xl shadow-lifted z-20 py-1 animate-fade-in-soft">
-                    {AI_SECTION_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.section}
-                        onClick={() => handleAiGenerate(opt.section)}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-warmgray-600 hover:bg-cream-100 hover:text-ink-700 transition-colors text-left"
-                      >
-                        <Sparkles className="w-3.5 h-3.5 text-terracotta-400 flex-shrink-0" strokeWidth={1.5} />
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
               {/* Save to Page toggle */}
               <button
                 onClick={() => { setSavePanel((v) => !v); setSaveError(''); }}
@@ -386,21 +312,6 @@ export function LessonView({
               )}
             </div>
           </div>
-
-          {/* AI feedback */}
-          {(aiMsg || aiError) && (
-            <div className={`px-5 py-2.5 text-xs flex items-center gap-2 ${aiError ? 'bg-brick-50 text-brick-600' : 'bg-sage-50 text-sage-700'}`}>
-              {aiError
-                ? <X className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={2} />
-                : <Check className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={2} />}
-              {aiError || aiMsg}
-              {aiError && (
-                <button onClick={() => setAiError('')} className="ml-auto text-brick-400 hover:text-brick-600">
-                  <X className="w-3 h-3" strokeWidth={2} />
-                </button>
-              )}
-            </div>
-          )}
 
           {/* Save to Page panel */}
           {savePanel && (

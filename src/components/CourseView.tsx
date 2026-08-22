@@ -3,7 +3,12 @@ import {
   ArrowLeft, Clock, CheckCircle, ArrowRight, BookOpen, Loader2, FileText,
 } from 'lucide-react';
 import type { Course, Module, LessonProgress, AppDocument } from '@/types';
-import { fetchCourseWithModules, fetchLessonProgress, fetchDocumentByCourseId } from '@/lib/api';
+import {
+  fetchCourseWithModules,
+  fetchLessonProgress,
+  fetchDocumentByCourseId,
+  waitForCourseDocument,
+} from '@/lib/api';
 import { COURSE_COLOR_GRADIENTS } from '@/lib/courseColors';
 
 interface CourseViewProps {
@@ -42,6 +47,19 @@ export function CourseView({ courseId, onOpenLesson, onOpenPage, onBack }: Cours
   useEffect(() => {
     load();
   }, [load]);
+
+  // The knowledge page is generated in the background after the course
+  // response returns, so poll briefly for it when the initial fetch missed it.
+  useEffect(() => {
+    if (loading || knowledgePage) return;
+    let cancelled = false;
+    waitForCourseDocument(courseId).then((page) => {
+      if (!cancelled && page) setKnowledgePage(page);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [courseId, loading, knowledgePage]);
 
   const totalLessons = modules.reduce((sum, m) => sum + m.lessons.length, 0);
   const completedLessons = Array.from(progressMap.values()).filter(

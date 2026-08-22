@@ -13,6 +13,8 @@ interface GenerationRequest {
   goal: string;
   time_commitment: string;
   difficulty: string;
+  /** When false, skip knowledge-page generation entirely. Defaults to true. */
+  include_knowledge_page?: boolean;
 }
 
 interface LessonData {
@@ -269,11 +271,9 @@ async function callGemini(
   geminiApiKey: string,
   systemPrompt: string,
   userPrompt: string,
-  maxTokens = 4096,
+  maxTokens: number,
 ): Promise<unknown> {
-  // gemini-1.5-flash is widely available; change to gemini-2.0-flash if your
-  // API key / project has access to that model.
-  const GEMINI_MODEL = "gemini-1.5-flash";
+  const GEMINI_MODEL = "gemini-3.6-flash";
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiApiKey}`;
 
   const response = await fetch(geminiUrl, {
@@ -286,6 +286,10 @@ async function callGemini(
         temperature: 0.7,
         maxOutputTokens: maxTokens,
         responseMimeType: "application/json",
+        // These are structured single-shot JSON tasks — keep reasoning effort
+        // low so it doesn't eat into the shared output-token budget.
+        // (maxOutputTokens covers thinking tokens + visible output.)
+        thinkingConfig: { thinkingLevel: "low" },
       },
     }),
   });
@@ -297,8 +301,23 @@ async function callGemini(
   }
 
   const geminiData = await response.json();
-  const text = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("Gemini returned empty response");
+  const candidate = geminiData?.candidates?.[0];
+  const finishReason: string | undefined = candidate?.finishReason;
+
+  if (finishReason === "MAX_TOKENS") {
+    throw new Error(
+      `Gemini response truncated (MAX_TOKENS, budget ${maxTokens})`,
+    );
+  }
+
+  const text = candidate?.content?.parts?.find(
+    (p: { text?: string }) => typeof p.text === "string",
+  )?.text;
+  if (!text) {
+    throw new Error(
+      `Gemini returned empty response (finishReason: ${finishReason ?? "unknown"})`,
+    );
+  }
   return extractJson(text);
 }
 
@@ -351,6 +370,7 @@ Deno.serve(async (req: Request) => {
 
     const body: GenerationRequest = await req.json();
     const { topic, knowledge_level, goal, time_commitment, difficulty } = body;
+    const includeKnowledgePage = body.include_knowledge_page !== false;
 
     if (!topic || !knowledge_level || !goal || !time_commitment || !difficulty) {
       return new Response(
@@ -456,50 +476,72 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ── Generate and persist knowledge page ─────────────────────────────────
-    // This runs after the course is fully saved. A failure here must NOT
-    // cause the whole request to fail — the course already exists and the
-    // user should still land on it. We return pageId: null on failure.
-    let pageId: string | null = null;
+    // ── Generate knowledge page in the background (unless opted out) ─────────
+    // We fire this off via EdgeRuntime.waitUntil so it runs after the HTTP
+    // response is returned. This keeps the request well under the 150s idle
+    // timeout. The client polls for the document until it appears, so the
+    // knowledge page shows up without a manual refresh.
+    const pageGenTask = includeKnowledgePage
+      ? (async () => {
+        try {
+          const pageData = (await callGemini(
+            geminiApiKey,
+            PAGE_SYSTEM_PROMPT,
+            buildPagePrompt(course, { topic, knowledge_level, goal, time_commitment, difficulty }),
+            // Generous budget: thinking tokens count against maxOutputTokens
+            // on Gemini 3.x, so a tight budget yields empty/truncated JSON.
+            16384,
+          )) as KnowledgePageData;
 
-    try {
-      const pageData = (await callGemini(
-        geminiApiKey,
-        PAGE_SYSTEM_PROMPT,
-        buildPagePrompt(course, { topic, knowledge_level, goal, time_commitment, difficulty }),
-        4096,
-      )) as KnowledgePageData;
+          const content = buildPageMarkdown(pageData);
+          const pageTitle = pageData.page_title || course.title;
 
-      const content = buildPageMarkdown(pageData);
-      const pageTitle = pageData.page_title || course.title;
+          const { error: pageError } = await supabase
+            .from("documents")
+            .insert({
+              user_id: userId,
+              title: pageTitle,
+              icon: "📖",
+              content,
+              course_id: courseId,
+              parent_id: null,
+              lesson_id: null,
+              cover_image: null,
+            });
 
-      const { data: pageRow, error: pageError } = await supabase
-        .from("documents")
-        .insert({
-          user_id: userId,
-          title: pageTitle,
-          icon: "📖",
-          content,
-          course_id: courseId,
-          parent_id: null,
-          lesson_id: null,
-          cover_image: null,
-        })
-        .select("id")
-        .single();
+          if (pageError) {
+            console.error("Background: failed to insert knowledge page:", pageError);
+          } else {
+            console.log("Background: knowledge page created for course", courseId);
+          }
+        } catch (pageErr) {
+          console.error("Background: knowledge page generation failed (non-fatal):", pageErr);
+        }
+      })()
+      : null;
 
-      if (pageError) {
-        console.error("Failed to insert knowledge page:", pageError);
-      } else if (pageRow) {
-        pageId = pageRow.id as string;
+    if (pageGenTask) {
+      // Register the background work so Deno doesn't cancel it when the
+      // response is sent.
+      const edgeRuntime = (
+        globalThis as Record<string, unknown> & {
+          EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void };
+        }
+      ).EdgeRuntime;
+      if (edgeRuntime) {
+        edgeRuntime.waitUntil(pageGenTask);
+      } else {
+        // No EdgeRuntime (e.g. some local `functions serve` setups) — run
+        // inline so the work still completes before the isolate may freeze.
+        console.warn(
+          "EdgeRuntime.waitUntil unavailable; awaiting knowledge-page generation inline",
+        );
+        await pageGenTask;
       }
-    } catch (pageErr) {
-      // Knowledge-page generation failed — log and continue gracefully.
-      console.error("Knowledge page generation failed (non-fatal):", pageErr);
     }
 
     return new Response(
-      JSON.stringify({ courseId, pageId }),
+      JSON.stringify({ courseId, pageId: null }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
