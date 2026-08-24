@@ -222,7 +222,7 @@ function ContinueLearningCard({
   return (
     <button
       onClick={onOpen}
-      className="group text-left w-full bg-cream-50 rounded-xl2 border border-cream-200 overflow-hidden hover:border-sand-200 hover:shadow-card transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-2"
+      className="group flex flex-col text-left w-full bg-cream-50 rounded-xl2 border border-cream-200 overflow-hidden hover:border-sand-200 hover:shadow-card transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-2"
       aria-label={`Continue course: ${course.title}, ${percent}% complete`}
     >
       <div className={`h-1.5 bg-gradient-to-r ${colorClass}`} />
