@@ -92,15 +92,43 @@ export function LessonView({
   useEffect(() => { load(); }, [load]);
 
   // The knowledge page is generated in the background after the course is
-  // created, so poll briefly for it when the initial fetch missed it.
+  // created, so poll continuously until it appears.
   useEffect(() => {
     if (loading || knowledgePage) return;
     let cancelled = false;
-    waitForCourseDocument(courseId).then((page) => {
-      if (!cancelled && page) setKnowledgePage(page);
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const poll = async () => {
+      try {
+        const page = await fetchDocumentByCourseId(courseId);
+        if (page && !cancelled) {
+          setKnowledgePage(page);
+          if (interval) clearInterval(interval);
+        }
+      } catch (e) {
+        console.error('LessonView poll for knowledge page failed:', e);
+      }
+    };
+
+    poll();
+    interval = setInterval(poll, 3000);
+    const timeout = setTimeout(() => {
+      if (interval) clearInterval(interval);
+    }, 90000);
+
+    // Backup via waitFor
+    waitForCourseDocument(courseId, { intervalMs: 2500, timeoutMs: 90000 }).then((page) => {
+      if (!cancelled && page) {
+        setKnowledgePage(page);
+        if (interval) clearInterval(interval);
+        clearTimeout(timeout);
+      }
     });
+
     return () => {
       cancelled = true;
+      if (interval) clearInterval(interval);
+      clearTimeout(timeout);
     };
   }, [courseId, loading, knowledgePage]);
 

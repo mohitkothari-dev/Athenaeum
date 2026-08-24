@@ -13,6 +13,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { CanvasView } from '@/components/CanvasView';
 import type { AppDocument, Course, CourseWithProgress } from '@/types';
 import type { CanvasDocument } from '@/types/canvas';
+import { supabase } from '@/lib/supabase';
 import {
   fetchDocuments,
   createDocument,
@@ -26,7 +27,6 @@ import {
   updateCanvas,
   deleteCanvas,
   generateCourse,
-  waitForCourseDocument,
   type GenerationParams,
 } from '@/lib/api';
 
@@ -52,6 +52,10 @@ function App() {
   const [coursesLoading, setCoursesLoading] = useState(false);
   const [canvases, setCanvases] = useState<CanvasDocument[]>([]);
   const [canvasesLoading, setCanvasesLoading] = useState(false);
+
+  // Filter out courses still being generated so they don't appear in the
+  // sidebar or library with a placeholder "Generating…" title.
+  const readyCourses = courses.filter((c) => c.status !== 'generating');
 
   const [dashboardProgress, setDashboardProgress] = useState<CourseWithProgress[]>([]);
   const [dashboardLoading, setDashboardLoading] = useState(false);
@@ -89,6 +93,153 @@ function App() {
       setDashboardProgress([]);
       setDashboardHasLoaded(false);
     }
+  }, [userId]);
+
+  // Fallback polling for documents in case realtime fails
+  // This ensures knowledge pages appear even if realtime subscription has issues
+  useEffect(() => {
+    if (!userId) return;
+    
+    const intervalId = setInterval(async () => {
+      try {
+        const docs = await fetchDocuments();
+        setDocuments((prev) => {
+          // Only update if there are new documents
+          if (docs.length !== prev.length) {
+            console.log('[Polling] Documents count changed:', prev.length, '→', docs.length);
+            return docs;
+          }
+          // Check if any document has been updated
+          const hasUpdates = docs.some((doc) => {
+            const existing = prev.find((p) => p.id === doc.id);
+            return existing && (
+              existing.title !== doc.title ||
+              existing.content !== doc.content ||
+              existing.updated_at !== doc.updated_at
+            );
+          });
+          if (hasUpdates) {
+            console.log('[Polling] Documents have updates, refreshing');
+            return docs;
+          }
+          return prev;
+        });
+      } catch (err) {
+        console.error('[Polling] Failed to fetch documents:', err);
+      }
+    }, 5000); // Poll every 5 seconds
+
+    return () => clearInterval(intervalId);
+  }, [userId]);
+
+  // Realtime sync for knowledge pages
+  useEffect(() => {
+    if (!userId) return;
+    
+    // Set up realtime subscription for documents table
+    const channel = supabase
+      .channel(`documents:user_id=eq.${userId}`, {
+        config: {
+          broadcast: { self: false },
+          presence: { key: '' },
+        },
+      })
+      .on(
+        'postgres_changes',
+        { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'documents', 
+          filter: `user_id=eq.${userId}` 
+        },
+        (payload) => {
+          console.log('[Realtime] Document INSERT received:', payload.new);
+          const inserted = payload.new as AppDocument;
+          setDocuments((prev) => {
+            // Avoid duplicates
+            if (prev.some((d) => d.id === inserted.id)) {
+              console.log('[Realtime] Document already exists, skipping:', inserted.id);
+              return prev;
+            }
+            console.log('[Realtime] Adding new document to state:', inserted.id, inserted.title);
+            // Add to the end to maintain creation order
+            return [...prev, inserted];
+          });
+        },
+      )
+      .on(
+        'postgres_changes',
+        { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'documents', 
+          filter: `user_id=eq.${userId}` 
+        },
+        (payload) => {
+          console.log('[Realtime] Document UPDATE received:', payload.new);
+          const updated = payload.new as AppDocument;
+          setDocuments((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+        },
+      )
+      .on(
+        'postgres_changes',
+        { 
+          event: 'DELETE', 
+          schema: 'public', 
+          table: 'documents', 
+          filter: `user_id=eq.${userId}` 
+        },
+        (payload) => {
+          console.log('[Realtime] Document DELETE received:', payload.old);
+          const deleted = payload.old as { id: string };
+          setDocuments((prev) => prev.filter((d) => d.id !== deleted.id));
+        },
+      )
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[Realtime] Documents subscription active');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('[Realtime] Documents subscription error:', err);
+        } else if (status === 'TIMED_OUT') {
+          console.warn('[Realtime] Documents subscription timed out');
+        } else {
+          console.log('[Realtime] Documents subscription status:', status);
+        }
+      });
+
+    return () => {
+      console.log('[Realtime] Cleaning up documents subscription');
+      void supabase.removeChannel(channel);
+    };
+  }, [userId]);
+
+  // Realtime sync for courses — picks up status transitions from the background
+  // generation task (generating → ready | error) without any polling.
+  useEffect(() => {
+    if (!userId) return;
+    const channel = supabase
+      .channel(`courses-${userId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'courses', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const inserted = payload.new as Course;
+          setCourses((prev) => (prev.some((c) => c.id === inserted.id) ? prev : [inserted, ...prev]));
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'courses', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const updated = payload.new as Course;
+          setCourses((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [userId]);
 
   const loadDashboardProgress = useCallback(async (courseList: Course[]) => {
@@ -224,40 +375,23 @@ function App() {
     if ('error' in result) {
       setHomeGenerationError(result.error);
     } else {
-      // The course is persisted before the response returns, so refresh
-      // courses immediately.
-      fetchCourses()
-        .then(setCourses)
-        .catch(err => console.error('Failed to refresh courses after generation:', err));
-
-      if (includeKnowledgePage) {
-        // The knowledge page is generated server-side in the background
-        // AFTER this response, so poll for it instead of refetching once —
-        // a single immediate fetch would race the background insert.
-        waitForCourseDocument(result.courseId)
-          .then((doc) => (doc ? fetchDocuments() : null))
-          .then((docs) => { if (docs) setDocuments(docs); })
-          .catch((err) => console.error('Failed to load knowledge page after generation:', err));
+      // Course + all modules/lessons are fully persisted when we get here.
+      // Refresh courses list so the sidebar and library update immediately
+      // without waiting for the Realtime event (which may lag or miss).
+      const updatedCourses = await fetchCourses().catch(() => null);
+      if (updatedCourses) {
+        setCourses(updatedCourses);
+        void loadDashboardProgress(updatedCourses);
       }
-
       navigate({ name: 'course', courseId: result.courseId });
     }
-  }, [navigate]);
+  }, [navigate, loadDashboardProgress]);
 
   useEffect(() => {
-    if (userId && (view.name === 'dashboard' || view.name === 'home')) {
-      // Refresh courses when returning to dashboard or home
-      fetchCourses()
-        .then(setCourses)
-        .catch(err => console.error('Failed to refresh courses:', err));
+    if (userId && (view.name === 'dashboard' || view.name === 'home') && !coursesLoading && !dashboardHasLoaded) {
+      void loadDashboardProgress(readyCourses);
     }
-  }, [userId, view.name]);
-
-  useEffect(() => {
-    if (userId && (view.name === 'dashboard' || view.name === 'home') && !coursesLoading) {
-      void loadDashboardProgress(courses);
-    }
-  }, [userId, view.name, courses, coursesLoading, loadDashboardProgress]);
+  }, [userId, view.name, coursesLoading, dashboardHasLoaded, loadDashboardProgress, readyCourses]);
 
   if (loading) {
     return (
@@ -316,7 +450,7 @@ function App() {
             onGenerate={() => navigate({ name: 'home' })}
             onProgress={() => navigate({ name: 'progress' })}
             onDeleteCourse={handleDeleteCourse}
-            courses={courses}
+            courses={readyCourses}
             coursesLoading={coursesLoading}
             dashboardProgress={dashboardProgress}
             dashboardLoading={dashboardLoading}
@@ -357,7 +491,7 @@ function App() {
         return (
           <ProgressView
             userId={user.id}
-            courses={courses}
+            courses={readyCourses}
             onBack={() => navigate({ name: 'dashboard' })}
             onOpenCourse={(courseId) => navigate({ name: 'course', courseId })}
           />
@@ -428,7 +562,7 @@ function App() {
         activeCourseId={view.name === 'course' || view.name === 'lesson' ? view.courseId : undefined}
         activeDocumentId={view.name === 'document' ? view.documentId : undefined}
         activeCanvasId={view.name === 'canvas' ? view.canvasId : undefined}
-        courses={courses}
+        courses={readyCourses}
         coursesLoading={coursesLoading}
         documents={documents}
         docsLoading={docsLoading}
