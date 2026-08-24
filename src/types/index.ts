@@ -42,6 +42,8 @@ export interface Module {
   lessons: Lesson[];
 }
 
+export type CourseStatus = 'generating' | 'ready' | 'error';
+
 export interface Course {
   id: string;
   user_id: string;
@@ -54,7 +56,9 @@ export interface Course {
   difficulty: string;
   estimated_duration: string;
   cover_color: string;
-  status: string;
+  /** Generation lifecycle: 'generating' → 'ready' (or 'error'). Older rows default to 'ready'. */
+  status: CourseStatus;
+  error_message: string | null;
   created_at: string;
   updated_at: string;
 }

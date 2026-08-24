@@ -113,6 +113,99 @@ const EXAMPLE_PROMPTS = [
   'Modern art history',
 ];
 
+// ─── Generation UI ─────────────────────────────────────────────────────────────
+
+const GENERATION_STATUS_MESSAGES = [
+  'Designing your curriculum…',
+  'Writing lessons…',
+  'Creating flashcards…',
+  'Building quizzes…',
+  'Adding practice exercises…',
+  'Finalizing your course…',
+];
+
+function estimateGenerationSeconds(
+  timeCommitment: string,
+  difficulty: string,
+  knowledgeLevel: string,
+  includePage: boolean,
+): { low: number; high: number; label: string } {
+  let low = 22;
+  let high = 35;
+
+  switch (timeCommitment) {
+    case '15 min/day':
+      low = 18; high = 28; break;
+    case '30 min/day':
+      low = 22; high = 35; break;
+    case '1 hour/day':
+      low = 28; high = 42; break;
+    case '2+ hours/day':
+      low = 35; high = 55; break;
+  }
+
+  if (difficulty === 'Easy') { low -= 3; high -= 5; }
+  if (difficulty === 'Hard') { low += 5; high += 10; }
+
+  if (knowledgeLevel === 'Advanced') { low += 3; high += 5; }
+  if (knowledgeLevel === 'Beginner') { low += 1; high += 2; }
+
+  if (includePage) { low += 8; high += 12; }
+
+  low = Math.max(15, low);
+  high = Math.max(low + 5, high);
+  high = Math.min(70, high);
+
+  return { low, high, label: `${low}–${high} seconds` };
+}
+
+function GenerationScreen({
+  timeCommitment,
+  difficulty,
+  knowledgeLevel,
+  includePage,
+}: {
+  timeCommitment: string;
+  difficulty: string;
+  knowledgeLevel: string;
+  includePage: boolean;
+}) {
+  const [msgIdx, setMsgIdx] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const estimate = estimateGenerationSeconds(timeCommitment, difficulty, knowledgeLevel, includePage);
+
+  useEffect(() => {
+    const id = setInterval(() => setMsgIdx((i) => (i + 1) % GENERATION_STATUS_MESSAGES.length), 3500);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="max-w-lg mx-auto py-24 text-center animate-fade-in">
+      <div className="relative w-20 h-20 mx-auto mb-6">
+        <div className="absolute inset-0 rounded-full bg-terracotta-50 animate-gentle-pulse" />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <Loader2 className="w-10 h-10 text-terracotta-500 animate-spin" strokeWidth={1.5} />
+        </div>
+      </div>
+      <h2 className="font-serif text-2xl text-ink-700 mb-2">Generating your course</h2>
+      <p className="text-sm text-warmgray-400 font-serif italic min-h-[20px] transition-all">
+        {GENERATION_STATUS_MESSAGES[msgIdx]}
+      </p>
+      <p className="text-xs text-warmgray-300 mt-4">
+        Estimated time: {estimate.label} {includePage && <span className="opacity-70">· includes knowledge page</span>}
+      </p>
+      <p className="text-[11px] text-warmgray-300 mt-1 tabular-nums">
+        Elapsed: {elapsed}s{elapsed > estimate.high ? ' · almost there…' : ''}
+      </p>
+    </div>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function ContinueLearningCard({
@@ -323,17 +416,12 @@ export function HomePage({
   // Generative loading state — replaces the whole page while generating
   if (generatingCourse) {
     return (
-      <div className="max-w-lg mx-auto py-24 text-center animate-fade-in">
-        <div className="relative w-20 h-20 mx-auto mb-6">
-          <div className="absolute inset-0 rounded-full bg-terracotta-50 animate-gentle-pulse" />
-          <div className="absolute inset-0 flex items-center justify-center">
-            <Loader2 className="w-10 h-10 text-terracotta-500 animate-spin" strokeWidth={1.5} />
-          </div>
-        </div>
-        <h2 className="font-serif text-2xl text-ink-700 mb-2">Generating your course</h2>
-        <p className="text-sm text-warmgray-400 font-serif italic">Designing your curriculum...</p>
-        <p className="text-xs text-warmgray-300 mt-4">This usually takes 20–40 seconds</p>
-      </div>
+      <GenerationScreen
+        timeCommitment={timeCommitment}
+        difficulty={difficulty}
+        knowledgeLevel={knowledgeLevel}
+        includePage={intent === 'course+page'}
+      />
     );
   }
 

@@ -23,7 +23,7 @@ Athenaeum is built on a modern, decoupled serverless architecture:
 * **Frontend**: React 18 (TypeScript), Vite, Tailwind CSS, Lucide Icons.
 * **Backend & Database**: Supabase (PostgreSQL with Row-Level Security, Database Migrations).
 * **Serverless Functions**: Supabase Edge Functions (Deno Deploy runtime).
-* **AI Engine**: Google Gemini API (`gemini-3.6-flash`).
+* **AI Engine**: Google Gemini API (`gemini-3.1-pro-preview`).
 * **Design & Typography**: Custom editorial themes utilizing *Newsreader* for reading and *Inter* for interface components.
 
 ---

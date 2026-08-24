@@ -1,0 +1,12 @@
+# Supabase local config — declarative edge-function settings.
+# The gateway will reject unauthenticated requests BEFORE your Deno handler runs.
+# Keep verify_jwt = true for owner-scoped functions (defense-in-depth: gateway
+# signature check + manual supabase.auth.getUser(jwt) + service_role RLS bypass).
+# See: https://supabase.com/docs/guides/functions/secrets#verify-jwt
+# Deploy with: supabase functions deploy (no --no-verify-jwt flag needed)
+
+[functions.generate-course]
+verify_jwt = true
+
+[functions.generate-notes]
+verify_jwt = true
