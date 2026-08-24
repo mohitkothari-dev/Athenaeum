@@ -301,7 +301,7 @@ export function LessonView({
         {activeMode === 'eli10'     && <div className="reading-text animate-fade-in" dangerouslySetInnerHTML={{ __html: lesson.eli10     }} />}
         {activeMode === 'practice'  && <div className="reading-text animate-fade-in" dangerouslySetInnerHTML={{ __html: lesson.practice  }} />}
         {activeMode === 'flashcards'&& <FlashcardsMode lesson={lesson} courseId={courseId} />}
-        {activeMode === 'quiz'      && <QuizMode lesson={lesson} courseId={courseId} onComplete={handleMarkComplete} />}
+        {activeMode === 'quiz'      && <QuizMode lesson={lesson} courseId={courseId} />}
       </div>
 
       {/* ── Knowledge Page action bar ──────────────────────────────────────── */}
@@ -513,7 +513,7 @@ function FlashcardsMode({ lesson, courseId }: { lesson: Lesson; courseId: string
 
 // ─── QuizMode ─────────────────────────────────────────────────────────────────
 
-function QuizMode({ lesson, courseId, onComplete }: { lesson: Lesson; courseId: string; onComplete: () => void }) {
+function QuizMode({ lesson, courseId }: { lesson: Lesson; courseId: string }) {
   const [currentIdx,  setCurrentIdx ] = useState(0);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [answers,     setAnswers    ] = useState<boolean[]>([]);
@@ -539,7 +539,6 @@ function QuizMode({ lesson, courseId, onComplete }: { lesson: Lesson; courseId: 
     } else {
       const finalScore = answers.filter(Boolean).length;
       saveQuizResult(courseId, lesson.id, finalScore, questions.length).catch(console.error);
-      if (finalScore / questions.length >= 0.7) onComplete();
       setFinished(true);
     }
   };
