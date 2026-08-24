@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Menu, BookOpen } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { AuthPage } from '@/components/AuthPage';
@@ -55,11 +55,19 @@ function App() {
 
   // Filter out courses still being generated so they don't appear in the
   // sidebar or library with a placeholder "Generating…" title.
-  const readyCourses = courses.filter((c) => c.status !== 'generating');
+  const readyCourses = useMemo(
+    () => courses.filter((c) => c.status !== 'generating'),
+    [courses],
+  );
 
   const [dashboardProgress, setDashboardProgress] = useState<CourseWithProgress[]>([]);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardHasLoaded, setDashboardHasLoaded] = useState(false);
+  // Settles only after the initial fetchCourses() resolves/rejects. Using the
+  // `coursesLoading` flag here is racy: on first mount both effects run with
+  // stale closure values and the dashboard would load an empty course list
+  // before the real one arrives.
+  const [coursesFetchSettled, setCoursesFetchSettled] = useState(false);
 
   // Home page generation state (drives the inline generator on HomePage)
   const [homeGenerating, setHomeGenerating] = useState(false);
@@ -80,7 +88,10 @@ function App() {
       fetchCourses()
         .then(setCourses)
         .catch(err => console.error('Failed to load courses:', err))
-        .finally(() => setCoursesLoading(false));
+        .finally(() => {
+          setCoursesLoading(false);
+          setCoursesFetchSettled(true);
+        });
 
       loadCanvases()
         .then(setCanvases)
@@ -92,6 +103,7 @@ function App() {
       setCanvases([]);
       setDashboardProgress([]);
       setDashboardHasLoaded(false);
+      setCoursesFetchSettled(false);
     }
   }, [userId]);
 
@@ -388,10 +400,14 @@ function App() {
   }, [navigate, loadDashboardProgress]);
 
   useEffect(() => {
-    if (userId && (view.name === 'dashboard' || view.name === 'home') && !coursesLoading && !dashboardHasLoaded) {
-      void loadDashboardProgress(readyCourses);
-    }
-  }, [userId, view.name, coursesLoading, dashboardHasLoaded, loadDashboardProgress, readyCourses]);
+    if (!userId || !coursesFetchSettled) return;
+    if (view.name !== 'dashboard' && view.name !== 'home') return;
+    // Refetch on every entry into home/library (and whenever the course list
+    // changes) so lesson completion is reflected in the sections. The effect
+    // only re-runs when `view.name` or the memoized `readyCourses` changes,
+    // not on every render.
+    void loadDashboardProgress(readyCourses);
+  }, [userId, view.name, coursesFetchSettled, readyCourses, loadDashboardProgress]);
 
   if (loading) {
     return (
