@@ -15,7 +15,8 @@ These are automatically available in your edge functions:
 - `SUPABASE_SERVICE_ROLE_KEY` - Admin key with full database access (use carefully!)
 
 ### Manual Configuration Required
-- `GEMINI_API_KEY` - Google Gemini API key for AI course generation
+- `GEMINI_API_KEY` - Google Gemini API key — **required** (fallback for `generate-course`, required for `ingest-source` YouTube/PDF `callGeminiMultimodal` `gemini-3.6-flash`/`3.5-flash`)
+- `MISTRAL_API_KEY` - Mistral API key — **recommended** (primary for `generate-course` `mistral-large-latest`; edge tries `Mistral` first if set, falls back to `Gemini`)
 
 ## Setup Instructions
 
@@ -37,6 +38,7 @@ To find your project ref:
 ### 3. Set Required Secrets
 ```bash
 supabase secrets set GEMINI_API_KEY=your_actual_gemini_api_key
+supabase secrets set MISTRAL_API_KEY=your_actual_mistral_api_key  # optional but recommended — makes Mistral primary
 ```
 
 ### 4. Verify Secrets (Optional)
@@ -58,9 +60,10 @@ supabase functions deploy generate-course
 For local testing with Supabase CLI:
 
 1. Create a `.env` file in `supabase/functions/`:
-   ```env
-   GEMINI_API_KEY=your_gemini_api_key_here
-   ```
+    ```env
+    GEMINI_API_KEY=your_gemini_api_key_here
+    MISTRAL_API_KEY=your_mistral_api_key_here  # optional
+    ```
 
 2. Serve functions locally:
    ```bash
@@ -112,7 +115,8 @@ For local testing with Supabase CLI:
 | `SUPABASE_URL` | Auto-injected | ✅ | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Auto-injected | ✅ | Admin database access |
 | `SUPABASE_ANON_KEY` | Auto-injected | ❌ | Public client operations (not used in generate-course) |
-| `GEMINI_API_KEY` | Manual setup | ✅ | Google Gemini AI API access |
+| `GEMINI_API_KEY` | Manual setup | ✅ | Google Gemini AI API access — fallback for `generate-course`, required for `ingest-source` |
+| `MISTRAL_API_KEY` | Manual setup | ⚪ | Mistral AI API access — primary for `generate-course` (`mistral-large-latest`; edge `Deno.env.get("MISTRAL_API_KEY")` checked first at `supabase/functions/generate-course/index.ts:489`) |
 
 ## Getting API Keys
 
@@ -121,6 +125,12 @@ For local testing with Supabase CLI:
 2. Sign in with your Google account
 3. Click "Create API Key"
 4. Copy the key and set it using `supabase secrets set GEMINI_API_KEY=...`
+
+### Mistral API Key (recommended — primary)
+1. Visit [Mistral Console](https://console.mistral.ai/api-keys)
+2. Sign in → **API Keys** → **Create new key**
+3. Copy the key and set it using `supabase secrets set MISTRAL_API_KEY=...`
+4. Redeploy: `supabase functions deploy generate-course` (edge checks `Deno.env.get("MISTRAL_API_KEY")` first)
 
 ### Supabase Keys
 1. Go to [Supabase Dashboard](https://supabase.com/dashboard)

@@ -53,7 +53,7 @@ if (!existsSync(envPath)) {
   });
   
   // Security check: Warn if sensitive keys are in .env
-  const sensitiveKeys = ['GEMINI_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY'];
+  const sensitiveKeys = ['GEMINI_API_KEY', 'MISTRAL_API_KEY'];
   sensitiveKeys.forEach(key => {
     // Check both VITE_ prefixed and non-prefixed versions
     const patterns = [
@@ -78,9 +78,11 @@ console.log('🔐 Checking Supabase Edge Function secrets...');
 console.log('  ℹ️  Run the following commands to set up edge function secrets:\n');
 console.log('     supabase login');
 console.log('     supabase link --project-ref YOUR_PROJECT_REF');
-console.log('     supabase secrets set GEMINI_API_KEY=your_actual_key');
+console.log('     supabase secrets set GEMINI_API_KEY=your_actual_key       # required (fallback + ingest-source)');
+console.log('     supabase secrets set MISTRAL_API_KEY=your_mistral_key     # recommended (primary for generate-course)');
 console.log('     supabase secrets list  # to verify\n');
-console.log('  📚 See supabase/functions/README.md for detailed instructions\n');
+console.log('  ℹ️  Provider order: generate-course tries MISTRAL_API_KEY (mistral-large-latest) first if set, then GEMINI_API_KEY (gemini-3.6-flash/3.5-flash). ingest-source always uses GEMINI.');
+console.log('  📚 See supabase/functions/README.md and ENVIRONMENT.md for detailed instructions\n');
 
 // Check if Supabase CLI is installed
 console.log('🛠️  Checking Supabase CLI...');
