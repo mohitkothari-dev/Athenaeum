@@ -117,3 +117,29 @@ export interface CourseWithProgress {
   completedLessons: number;
   percent: number;
 }
+
+export type SourceType = 'pdf' | 'youtube' | 'audio' | 'web';
+
+export type SourceStatus =
+  | 'pending'
+  | 'uploading'
+  | 'extracting'
+  | 'ready'
+  | 'error';
+
+export interface Source {
+  id: string;
+  user_id: string;
+  type: SourceType;
+  title: string;
+  original_url: string | null;
+  storage_path: string | null;
+  status: SourceStatus;
+  metadata: Record<string, any>;
+  extracted_text: string | null;
+  course_id: string | null;
+  document_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+

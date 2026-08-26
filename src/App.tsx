@@ -370,7 +370,9 @@ function App() {
     knowledgeLevel: string,
     timeCommitment: string,
     difficulty: string,
-    includeKnowledgePage: boolean
+    includeKnowledgePage: boolean,
+    sourceId?: string,
+    isPracticeMode?: boolean
   ) => {
     setHomeGenerationError('');
     setHomeGenerating(true);
@@ -381,15 +383,17 @@ function App() {
       time_commitment: timeCommitment,
       difficulty,
       include_knowledge_page: includeKnowledgePage,
+      source_id: sourceId,
+      is_practice_mode: isPracticeMode,
     };
     const result = await generateCourse(params);
     setHomeGenerating(false);
     if ('error' in result) {
       setHomeGenerationError(result.error);
     } else {
-      // Course + all modules/lessons are fully persisted when we get here.
-      // Refresh courses list so the sidebar and library update immediately
-      // without waiting for the Realtime event (which may lag or miss).
+      // Generation runs in the background — the course row exists with
+      // status='generating'. Fetch courses now so the sidebar shows the
+      // placeholder immediately; CourseView will poll until status='ready'.
       const updatedCourses = await fetchCourses().catch(() => null);
       if (updatedCourses) {
         setCourses(updatedCourses);
@@ -439,6 +443,7 @@ function App() {
       case 'home':
         return (
           <HomePage
+            userId={user.id}
             userEmail={user.email || ''}
             dashboardProgress={dashboardProgress}
             dashboardLoading={dashboardLoading}
@@ -456,6 +461,9 @@ function App() {
             onCreateDocument={async (title) => { await handleCreateDocumentSimple(title); }}
             onOpenCanvas={(canvasId) => navigate({ name: 'canvas', canvasId })}
             onCreateCanvas={handleCreateCanvas}
+            onDocumentCreated={(doc) => {
+              setDocuments((prev) => [...prev, doc]);
+            }}
           />
         );
 

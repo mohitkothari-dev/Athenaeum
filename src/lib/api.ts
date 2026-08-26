@@ -1,5 +1,12 @@
 import { supabase } from '@/lib/supabase';
-import type { Course, Module, Lesson, LessonProgress, QuizResult, FlashcardReview, AppDocument } from '@/types';
+
+/**
+ * AI Provider Configuration and Manager
+ * 
+ * Provides multi-provider AI service with automatic fallback and rate limiting.
+ * Currently supports: Mistral, Gemini (in order of preference)
+ */
+import type { Course, Module, Lesson, LessonProgress, QuizResult, FlashcardReview, AppDocument, Source } from '@/types';
 import type { CanvasDocument, CanvasElement } from '@/types/canvas';
 
 function parseLesson(raw: Record<string, unknown>): Lesson {
@@ -214,139 +221,280 @@ export interface GenerationParams {
   difficulty: string;
   /** Whether to also generate a knowledge page for the course (default: true) */
   include_knowledge_page?: boolean;
+  source_id?: string; // Grounding source ID
+  is_practice_mode?: boolean; // Practice-only course flag
 }
+
+// Configuration for AI providers - order matters (preferred first)
+export const AI_PROVIDERS = [
+  {
+    name: 'Mistral',
+    model: 'mistral-large-latest',
+    apiKeyEnv: 'VITE_MISTRAL_API_KEY',
+    enabled: !!import.meta.env.VITE_MISTRAL_API_KEY,
+    priority: 1,
+    rateLimit: { requests: 20, windowMs: 60000 }, // 20 requests per minute
+    maxTokens: 6000,
+    maxRetries: 2,
+    apiUrl: 'https://api.mistral.ai/v1/chat/completions',
+    endpoint: 'chat/completions'
+  },
+  {
+    name: 'Groq',
+    model: 'llama-3.1-70b-versatile',
+    apiKeyEnv: 'VITE_GROQ_API_KEY',
+    enabled: !!import.meta.env.VITE_GROQ_API_KEY,
+    priority: 2,
+    rateLimit: { requests: 100, windowMs: 60000 }, // 100 requests per minute (very generous)
+    maxTokens: 8000,
+    maxRetries: 3,
+    apiUrl: 'https://api.groq.com/v1/chat/completions',
+    endpoint: 'chat/completions'
+  },
+  {
+    name: 'Gemini',
+    model: 'gemini-3.6-flash',
+    apiKeyEnv: 'VITE_GEMINI_API_KEY',
+    enabled: !!import.meta.env.VITE_GEMINI_API_KEY,
+    priority: 3,
+    rateLimit: { requests: 10, windowMs: 60000 }, // 10 requests per minute (free tier)
+    maxTokens: 6000,
+    maxRetries: 2,
+    apiUrl: 'https://generativelanguage.googleapis.com/v1beta/models/',
+    endpoint: 'generateContent'
+  }
+];
+
+export type AIProvider = typeof AI_PROVIDERS[0];
+
+// Synthetic provider used when no VITE_ client API key is configured. It exists
+// solely so a generation request still reaches the edge function, which owns
+// provider selection and keys via server-side Supabase secrets
+// (GEMINI_API_KEY / MISTRAL_API_KEY) — a client key is never required.
+const SERVER_PROVIDER: AIProvider = {
+  name: 'Server',
+  model: '',
+  apiKeyEnv: '',
+  enabled: true,
+  priority: Number.MAX_SAFE_INTEGER,
+  rateLimit: { requests: Number.MAX_SAFE_INTEGER, windowMs: 60000 },
+  maxTokens: 8000,
+  maxRetries: 1,
+  apiUrl: '',
+  endpoint: '',
+};
+
+// Rate limiting and provider management
+class AIProviderManager {
+  private providerStats: Map<string, { requests: number; windowStart: number }> = new Map();
+  private pendingRequests: Map<string, Promise<any>> = new Map();
+  
+  isProviderAvailable(provider: AIProvider): boolean {
+    if (!provider.enabled) return false;
+    
+    const stats = this.providerStats.get(provider.name) || { requests: 0, windowStart: Date.now() - 60000 };
+    const now = Date.now();
+    
+    // Reset window if expired
+    if (now - stats.windowStart >= provider.rateLimit.windowMs) {
+      stats.requests = 0;
+      stats.windowStart = now;
+    }
+    
+    return stats.requests < provider.rateLimit.requests;
+  }
+  
+  async incrementProviderUsage(provider: AIProvider): Promise<void> {
+    const stats = this.providerStats.get(provider.name) || { requests: 0, windowStart: Date.now() - 60000 };
+    const now = Date.now();
+    
+    if (now - stats.windowStart >= provider.rateLimit.windowMs) {
+      stats.requests = 0;
+      stats.windowStart = now;
+    }
+    
+    stats.requests++;
+    this.providerStats.set(provider.name, stats);
+    
+    // Wait if rate limited
+    if (stats.requests >= provider.rateLimit.requests) {
+      const waitTime = provider.rateLimit.windowMs - (now - stats.windowStart);
+      await new Promise(resolve => setTimeout(resolve, waitTime + 100));
+      // Reset after waiting
+      stats.requests = 0;
+      stats.windowStart = Date.now();
+      this.providerStats.set(provider.name, stats);
+    }
+  }
+  
+  async executeWithFallback(
+    params: GenerationParams,
+    preferredProviders?: string[]
+  ): Promise<{ courseId: string } | { error: string }> {
+    // Sort providers by preference and availability
+    const availableProviders = AI_PROVIDERS
+      .filter(provider => provider.enabled && this.isProviderAvailable(provider))
+      .sort((a, b) => {
+        // If preferredProviders specified, use that order
+        if (preferredProviders) {
+          const aIndex = preferredProviders.indexOf(a.name);
+          const bIndex = preferredProviders.indexOf(b.name);
+          if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+          if (aIndex !== -1) return -1;
+          if (bIndex !== -1) return 1;
+        }
+        return a.priority - b.priority;
+      });
+    
+    // The edge function performs AI generation server-side via Supabase secrets
+    // (GEMINI_API_KEY / MISTRAL_API_KEY), so no VITE_ client key is required.
+    // If no public provider key is configured, push the synthetic server pass so
+    // the request still reaches the edge function instead of failing locally.
+    if (availableProviders.length === 0) {
+      availableProviders.push(SERVER_PROVIDER);
+    }
+    
+    let lastError = '';
+    let totalRetries = 0;
+    
+    for (const provider of availableProviders) {
+      try {
+        await this.incrementProviderUsage(provider);
+        
+        // Make the API call to the edge function with provider preference
+        const { data, error } = await supabase.functions.invoke('generate-course', {
+          body: {
+            ...params,
+            preferred_provider: provider.name.toLowerCase(),
+            api_providers_config: AI_PROVIDERS.map(p => ({
+              name: p.name,
+              model: p.model,
+              enabled: p.enabled
+            }))
+          },
+          headers: { Authorization: `Bearer ${await this.getValidToken()}` },
+        });
+        
+        if (error) {
+          // Supabase wraps non-2xx in {message, context: Response}. Extract server body for useful diagnostics.
+          const errObj = error as { message?: string; context?: unknown };
+          const ctx: unknown = errObj.context;
+          let serverMsg: string | null = null;
+          let serverDetails: string | null = null;
+          let status: number | undefined;
+          if (ctx instanceof Response) {
+            status = ctx.status;
+            try {
+              const body = await ctx.clone().json() as Record<string, unknown>;
+              serverMsg = (body.error as string | undefined) ?? (body.message as string | undefined) ?? null;
+              serverDetails = (body.details as string | undefined) ?? null;
+            } catch {
+              try { serverMsg = await ctx.clone().text(); } catch { /* ignore */ }
+            }
+          }
+          const combined = [serverMsg, serverDetails].filter(Boolean).join(' — ') || errObj.message || String(error);
+          // Surface status for transient gateway errors so UI can suggest retry
+          const isTransient = status === 502 || status === 504 || status === 503 || combined.includes('502') || combined.includes('504');
+          const msg = isTransient
+            ? `${combined} (status ${status ?? 'gateway'} — transient, please retry in 10s)`
+            : combined;
+          throw new Error(msg);
+        }
+        
+        if (data?.courseId) {
+          console.log(`Course generation succeeded with ${provider.name}`);
+          return { courseId: data.courseId };
+        }
+        
+        // Edge may return {error, details} with 200? handle generically
+        const dataObj = data as Record<string, unknown> | null;
+        const dataErr = (dataObj?.error as string | undefined) ?? (dataObj?.message as string | undefined);
+        const dataDetails = dataObj?.details as string | undefined;
+        if (dataErr) throw new Error([dataErr, dataDetails].filter(Boolean).join(' — '));
+        throw new Error('No course ID returned');
+        
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        lastError = error;
+        totalRetries++;
+        
+        console.error(`${provider.name} failed (attempt ${totalRetries}):`, error);
+        
+        // If this is the last provider, return the error (with one auto-retry for transient 502/503)
+        if (provider === availableProviders[availableProviders.length - 1]) {
+          const isTransient = error.includes('502') || error.includes('503') || error.includes('504') || error.toLowerCase().includes('gateway') || error.toLowerCase().includes('transient');
+          if (isTransient && totalRetries < 3) {
+            console.warn(`Transient 502/503 from ${provider.name}, auto-retrying in 4s (attempt ${totalRetries + 1}/3)...`);
+            await new Promise((r) => setTimeout(r, 4000));
+            try {
+              await this.incrementProviderUsage(provider);
+              const { data: retryData, error: retryErr } = await supabase.functions.invoke('generate-course', {
+                body: {
+                  ...params,
+                  preferred_provider: provider.name.toLowerCase(),
+                  api_providers_config: AI_PROVIDERS.map((p) => ({ name: p.name, model: p.model, enabled: p.enabled })),
+                },
+                headers: { Authorization: `Bearer ${await this.getValidToken()}` },
+              });
+              if (!retryErr && (retryData as Record<string, unknown>)?.courseId) {
+                console.log(`Course generation succeeded on transient retry with ${provider.name}`);
+                return { courseId: (retryData as { courseId: string }).courseId };
+              }
+              const retryMsg = retryErr
+                ? ((retryErr as { message?: string }).message || String(retryErr))
+                : ((retryData as Record<string, unknown>)?.error as string | undefined) || 'No course ID after retry';
+              // Still failed — return friendly message that preserves Try again flow
+              return { error: `${lastError} — auto-retry also failed: ${retryMsg}. Please click "Try again" in 10s.` };
+            } catch (retryEx) {
+              const rMsg = retryEx instanceof Error ? retryEx.message : String(retryEx);
+              return { error: `${lastError} — auto-retry failed: ${rMsg}. Please click "Try again".` };
+            }
+          }
+          // Enhanced error message with provider info
+          const rateLimitMessages = {
+            'Mistral': 'Mistral API rate limit reached. Try again in a few minutes.',
+            'Gemini': 'Gemini API rate limit reached. The free tier has limited requests per minute.'
+          };
+          
+          const rateLimitMsg = rateLimitMessages[provider.name as keyof typeof rateLimitMessages] || '';
+          const enhancedError = rateLimitMsg || lastError;
+          
+          return { error: enhancedError };
+        }
+        
+        // Small delay before trying next provider
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    return { error: lastError || 'All AI providers failed' };
+  }
+  
+  private async getValidToken(): Promise<string> {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) console.warn('getSession error:', sessionError);
+    
+    let token = sessionData.session?.access_token;
+    if (!token) {
+      const { data: refreshed } = await supabase.auth.refreshSession();
+      token = refreshed.session?.access_token;
+    }
+    
+    if (!token) {
+      throw new Error('Session expired. Please refresh the page and sign in again.');
+    }
+    
+    return token;
+  }
+}
+
+const aiProviderManager = new AIProviderManager();
 
 export async function generateCourse(
   params: GenerationParams,
+  preferredProviders?: string[]
 ): Promise<{ courseId: string } | { error: string }> {
-  // maxAttempts is only used for UNAUTHORIZED retries (session refresh + one retry).
-  // Network errors and function errors (4xx/5xx) are NOT retried because the
-  // function is non-idempotent — it may have already written the course to DB.
-  const maxAttempts = 2;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      // Ensure we have a fresh session — stale/expired JWT causes gateway UNAUTHORIZED_NO_AUTH_HEADER
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      let token: string | null | undefined = sessionData.session?.access_token;
-      if (sessionError) console.warn('getSession error before generateCourse:', sessionError);
-      if (!token) {
-        const { data: refreshed } = await supabase.auth.refreshSession();
-        token = refreshed.session?.access_token ?? null;
-      }
-      if (!token) {
-        return { error: 'Session expired. Please refresh the page and sign in again.' };
-      }
-
-      // The edge function runs synchronously (Gemini call + DB writes) and
-      // returns courseId on success. It is NOT safe to retry on network errors
-      // because the function may have already completed and written the course.
-      let rawData: unknown;
-      let rawError: unknown;
-      try {
-        const { data, error } = await supabase.functions.invoke('generate-course', {
-          body: params,
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        rawData = data;
-        rawError = error;
-      } catch (fetchError) {
-        // Don't retry — the function may have already run and created a course row.
-        // Surface the error so the user can try again manually.
-        console.error('generateCourse network error (not retrying — function may have completed):', fetchError);
-        return { error: 'Network error — please check your connection. If a course appeared in your library, it was generated successfully.' };
-      }
-
-      // Parse error responses from the edge function / Supabase gateway
-      if (rawError) {
-        const errObj = rawError as { message?: string; name?: string; context?: unknown };
-        let status: number | undefined;
-        let bodyObj: Record<string, unknown> | null = null;
-        let bodyText: string | null = null;
-
-        const ctx: unknown = errObj.context;
-        if (ctx instanceof Response) {
-          status = ctx.status;
-          try {
-            bodyObj = (await ctx.clone().json()) as Record<string, unknown>;
-          } catch {
-            try {
-              bodyText = await ctx.clone().text();
-              if (bodyText) {
-                try { bodyObj = JSON.parse(bodyText) as Record<string, unknown>; } catch { /* keep as text */ }
-              }
-            } catch { /* ignore */ }
-          }
-        } else if (ctx && typeof ctx === 'object') {
-          const maybe = ctx as { status?: number; body?: unknown };
-          status = maybe.status;
-          if (typeof maybe.body === 'string') {
-            bodyText = maybe.body;
-            try { bodyObj = JSON.parse(bodyText) as Record<string, unknown>; } catch { /* keep text */ }
-          } else if (maybe.body && typeof maybe.body === 'object') {
-            bodyObj = maybe.body as Record<string, unknown>;
-          }
-        }
-
-        let bodyMsg = '';
-        if (bodyObj) {
-          const code = bodyObj.code as string | undefined;
-          if (code === 'UNAUTHORIZED_NO_AUTH_HEADER' || code === 'UNAUTHORIZED') {
-            console.error(`generateCourse attempt ${attempt + 1}: gateway UNAUTHORIZED`, bodyObj);
-            // Auth errors are safe to retry (no course was created yet)
-            if (attempt < maxAttempts - 1) {
-              await supabase.auth.refreshSession();
-              await new Promise((r) => setTimeout(r, 900 + Math.random() * 400));
-              continue;
-            }
-            return { error: 'Authentication failed. Please refresh the page and sign in again.' };
-          }
-          const errStr = (bodyObj.error as string | undefined) ?? (bodyObj.message as string | undefined);
-          if (errStr) bodyMsg = errStr;
-          if (!bodyMsg && bodyText) bodyMsg = bodyText;
-        } else if (bodyText) {
-          bodyMsg = bodyText;
-        } else {
-          bodyMsg = errObj.message || '';
-        }
-
-        console.error(`generateCourse failed (attempt ${attempt + 1}):`, { status, bodyObj, bodyText });
-
-        if (bodyMsg === 'Edge Function returned a non-2xx status code' || bodyMsg.toLowerCase().includes('edge function returned')) {
-          bodyMsg = bodyObj ? JSON.stringify(bodyObj) : 'Generation failed — check function logs.';
-        }
-
-        const msg = bodyMsg || `Generation failed (status ${status ?? 'unknown'})`;
-
-        // Only gateway-level errors (not function errors) are safe to retry.
-        // 502 means the function ran and Gemini failed inside it — don't retry,
-        // it would create orphan course rows and likely hit rate limits again.
-        // 401 UNAUTHORIZED is already handled above.
-        // 503/504 from the gateway (before the function runs) are safe to retry.
-        const safeToRetry = (status === 503 || status === 504) && attempt < maxAttempts - 1;
-        if (safeToRetry) {
-          const backoff = 1200 * (attempt + 1) + Math.random() * 600;
-          console.warn(`Retrying generateCourse (gateway error ${status}) in ${Math.round(backoff)}ms ...`);
-          await new Promise((r) => setTimeout(r, backoff));
-          continue;
-        }
-        return { error: msg };
-      }
-
-      const resultData = rawData as { courseId?: string; error?: string } | null;
-      if (!resultData?.courseId) {
-        const msg = resultData?.error || 'Generation failed — no course ID returned';
-        console.error(`generateCourse attempt ${attempt + 1}: missing courseId`, resultData);
-        return { error: msg };
-      }
-
-      return { courseId: resultData.courseId };
-    } catch (error) {
-      console.error('generateCourse unexpected error:', error);
-      // Don't retry — we can't know if the function already ran.
-      return { error: 'Failed to connect to AI service. Please check your connection and try again.' };
-    }
-  }
-  return { error: 'Failed to generate course. Please try again.' };
+  return aiProviderManager.executeWithFallback(params, preferredProviders);
 }
 
 /**
@@ -825,3 +973,111 @@ function deserializeCanvasElement(raw: Record<string, unknown>): CanvasElement {
       throw new Error(`Unknown element type: ${base.type}`);
   }
 }
+
+// ============================================
+// Source Ingestion API Helpers
+// ============================================
+
+export async function fetchSources(): Promise<Source[]> {
+  const { data, error } = await supabase
+    .from('sources')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []) as Source[];
+}
+
+export async function fetchSource(sourceId: string): Promise<Source> {
+  const { data, error } = await supabase
+    .from('sources')
+    .select('*')
+    .eq('id', sourceId)
+    .single();
+  if (error) throw error;
+  return data as Source;
+}
+
+export async function deleteSource(source: Source): Promise<void> {
+  if (source.storage_path) {
+    const { error: storageError } = await supabase.storage
+      .from('sources')
+      .remove([source.storage_path]);
+    if (storageError) {
+      console.warn('Failed to delete storage file:', storageError);
+    }
+  }
+
+  const { error } = await supabase
+    .from('sources')
+    .delete()
+    .eq('id', source.id);
+  if (error) throw error;
+}
+
+/**
+ * Retry extraction for a source that previously failed.
+ * Resets the source status to 'pending' and re-invokes the ingest-source
+ * edge function. The caller should re-subscribe to Realtime to watch progress.
+ */
+export async function retryIngestion(sourceId: string): Promise<void> {
+  const { error: resetError } = await supabase
+    .from('sources')
+    .update({ status: 'pending', metadata: {} })
+    .eq('id', sourceId);
+  if (resetError) throw new Error(`Failed to reset source status: ${resetError.message}`);
+
+  const { data: sessionData } = await supabase.auth.getSession();
+  let token: string | null | undefined = sessionData.session?.access_token;
+  if (!token) {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    token = refreshed.session?.access_token ?? null;
+  }
+  if (!token) throw new Error('Session expired. Please refresh the page and sign in again.');
+
+  const { error: invokeError } = await supabase.functions.invoke('ingest-source', {
+    body: { sourceId },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (invokeError) {
+    const msg = (invokeError as { message?: string }).message || String(invokeError);
+    // 202 is expected (background processing) — SDK may surface it as an error
+    if (!msg.includes('202')) {
+      console.warn('retryIngestion invoke warning:', msg);
+    }
+  }
+}
+
+export async function generateNotesOrStudyGuide(
+  sourceId: string,
+  action: 'notes' | 'study_guide'
+): Promise<AppDocument | { error: string }> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  let token: string | null | undefined = sessionData.session?.access_token;
+  if (!token) {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    token = refreshed.session?.access_token ?? null;
+  }
+  if (!token) return { error: 'Session expired. Please refresh the page and sign in again.' };
+
+  try {
+    const { data, error } = await supabase.functions.invoke('generate-notes', {
+      body: {
+        action: action === 'notes' ? 'generate_notes_from_source' : 'generate_study_guide_from_source',
+        sourceId,
+      },
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (error) {
+      console.error('Failed to generate notes/study guide:', error);
+      return { error: (error as any).message || 'Failed to generate' };
+    }
+
+    const doc = (data as { document?: AppDocument } | null)?.document;
+    if (!doc) return { error: 'No document returned' };
+    return doc;
+  } catch (err: any) {
+    return { error: err.message || 'Failed to connect to server' };
+  }
+}
+

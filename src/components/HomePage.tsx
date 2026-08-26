@@ -13,10 +13,21 @@ import {
   ChevronDown,
   Target,
   BarChart3,
+  Paperclip,
+  Mic,
+  Link as LinkIcon,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  X,
 } from 'lucide-react';
-import type { AppDocument, CourseWithProgress } from '@/types';
+import type { AppDocument, CourseWithProgress, Source, SourceType } from '@/types';
 import type { CanvasDocument } from '@/types/canvas';
 import { COURSE_COLOR_GRADIENTS } from '@/lib/courseColors';
+import { IngestionEngine, type IngestionInput } from '@/lib/ingestion';
+import { generateNotesOrStudyGuide, retryIngestion } from '@/lib/api';
+import { getYoutubeVideoId } from '@/lib/ingestion/providers/youtube';
+import { supabase } from '@/lib/supabase';
 
 // ─── Intent Types ────────────────────────────────────────────────────────────
 
@@ -34,6 +45,7 @@ interface Intent {
 // ─── Props ───────────────────────────────────────────────────────────────────
 
 interface HomePageProps {
+  userId: string;
   userEmail: string;
   dashboardProgress: CourseWithProgress[];
   dashboardLoading: boolean;
@@ -51,7 +63,9 @@ interface HomePageProps {
     knowledgeLevel: string,
     timeCommitment: string,
     difficulty: string,
-    includeKnowledgePage: boolean
+    includeKnowledgePage: boolean,
+    sourceId?: string,
+    isPracticeMode?: boolean
   ) => void;
   generatingCourse: boolean;
   generationError: string;
@@ -59,6 +73,7 @@ interface HomePageProps {
   onCreateDocument: (title: string) => Promise<void>;
   onOpenCanvas: (canvasId: string) => void;
   onCreateCanvas: () => Promise<void>;
+  onDocumentCreated?: (doc: AppDocument) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -317,6 +332,7 @@ function RecentCanvasCard({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function HomePage({
+  userId,
   userEmail,
   dashboardProgress,
   dashboardLoading,
@@ -334,6 +350,7 @@ export function HomePage({
   onCreateDocument,
   onOpenCanvas,
   onCreateCanvas,
+  onDocumentCreated,
 }: HomePageProps) {
   const [input, setInput] = useState('');
   const [intent, setIntent] = useState<LearningIntent>('course+page');
@@ -346,6 +363,22 @@ export function HomePage({
   const [timeCommitment, setTimeCommitment] = useState('30 min/day');
   const [difficulty, setDifficulty] = useState('Medium');
   
+  // Ingestion state variables
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [attachedUrl, setAttachedUrl] = useState<string>('');
+  const [attachedType, setAttachedType] = useState<SourceType | null>(null);
+  
+  const [showLinkInput, setShowLinkInput] = useState(false);
+  const [linkInput, setLinkInput] = useState('');
+  
+  const [processingStage, setProcessingStage] = useState<'idle' | 'ingesting' | 'source_error' | 'source_ready' | 'generating'>('idle');
+  const [ingestionStatus, setIngestionStatus] = useState<string>('pending');
+  const [ingestionError, setIngestionError] = useState<string>('');
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
+  const [ingestedSource, setIngestedSource] = useState<Source | null>(null);
+  const [ingestingElapsed, setIngestingElapsed] = useState(0);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-grow textarea
@@ -356,10 +389,90 @@ export function HomePage({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
-  // Show intent picker once user starts typing
+  // Show intent picker once user starts typing or has attachment
   useEffect(() => {
-    setShowIntentPicker(input.trim().length > 0);
-  }, [input]);
+    setShowIntentPicker(input.trim().length > 0 || attachedType !== null);
+  }, [input, attachedType]);
+
+  // Realtime subscription for source status transitions
+  useEffect(() => {
+    if (!activeSourceId || processingStage !== 'ingesting') return;
+    const channel = supabase
+      .channel(`source-status-${activeSourceId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'sources',
+          filter: `id=eq.${activeSourceId}`,
+        },
+        (payload) => {
+          const updated = payload.new as Source;
+          console.log('[Realtime] Source update received:', updated.status);
+          setIngestionStatus(updated.status);
+          if (updated.status === 'ready') {
+            setIngestedSource(updated);
+            setProcessingStage('source_ready');
+          } else if (updated.status === 'error') {
+            setIngestionError(updated.metadata?.error || 'Failed to process source material');
+            setProcessingStage('source_error');
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [activeSourceId, processingStage]);
+
+  // Polling fallback in case realtime lags or fails
+  useEffect(() => {
+    if (!activeSourceId || processingStage !== 'ingesting') return;
+
+    const interval = setInterval(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('sources')
+          .select('*')
+          .eq('id', activeSourceId)
+          .single();
+
+        if (!error && data) {
+          const updated = data as Source;
+          setIngestionStatus(updated.status);
+          if (updated.status === 'ready') {
+            setIngestedSource(updated);
+            setProcessingStage('source_ready');
+            clearInterval(interval);
+          } else if (updated.status === 'error') {
+            setIngestionError(updated.metadata?.error || 'Failed to process source material');
+            setProcessingStage('source_error');
+            clearInterval(interval);
+          }
+        }
+      } catch (err) {
+        console.warn('Polling error:', err);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [activeSourceId, processingStage]);
+
+  // Elapsed timer + timeout for stuck ingesting (504/background tasks may silently fail)
+  useEffect(() => {
+    if (processingStage !== 'ingesting') {
+      setIngestingElapsed(0);
+      return;
+    }    setIngestingElapsed(0);
+    const tick = setInterval(() => setIngestingElapsed((e) => e + 1), 1000);
+    return () => clearInterval(tick);
+  }, [processingStage]);
+
+  // If ingesting takes >90s without realtime/polling update, surface timeout but keep polling
+  const INGEST_TIMEOUT_S = 90;
+  const ingestingTimedOut = processingStage === 'ingesting' && ingestingElapsed >= INGEST_TIMEOUT_S;
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -368,20 +481,130 @@ export function HomePage({
     }
   };
 
-  const handleSubmit = () => {
+  const handleFileAttachClick = (type: 'pdf' | 'audio') => {
+    if (fileInputRef.current) {
+      fileInputRef.current.accept = type === 'pdf' ? '.pdf' : 'audio/*';
+      setAttachedType(type);
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setAttachedUrl('');
+    setShowLinkInput(false);
+    setAttachedFile(file);
+    
+    if (!input.trim()) {
+      setInput(`Learn from ${file.name.replace(/\.[^/.]+$/, '')}`);
+    }
+  };
+
+  const handleAttachLinkSubmit = () => {
+    if (!linkInput.trim()) return;
+    
+    setAttachedFile(null);
+    setAttachedUrl(linkInput.trim());
+    
+    const isYouTube = getYoutubeVideoId(linkInput.trim()) !== null;
+    setAttachedType(isYouTube ? 'youtube' : 'web');
+    
+    if (!input.trim()) {
+      try {
+        const urlObj = new URL(linkInput.trim());
+        setInput(`Study content from ${urlObj.hostname}`);
+      } catch {
+        setInput('Study content from link');
+      }
+    }
+    
+    setShowLinkInput(false);
+    setLinkInput('');
+  };
+
+  const handleRemoveAttachment = () => {
+    setAttachedFile(null);
+    setAttachedUrl('');
+    setAttachedType(null);
+  };
+
+  const handleSubmit = async () => {
     if (!input.trim() || generatingCourse) return;
 
-    // 'course+page' also generates a knowledge page; plain 'course' skips it.
-    // Unavailable intents are disabled in the picker and can't be selected.
-    const finalGoal = goal.trim() || 'Gain a solid understanding of the topic';
+    if (attachedType) {
+      setIngestionError('');
+      setProcessingStage('ingesting');
+      setIngestionStatus('pending');
 
+      const ingestionInput: IngestionInput = {
+        type: attachedType,
+        file: attachedFile || undefined,
+        url: attachedUrl || undefined,
+      };
+
+      try {
+        const source = await IngestionEngine.ingest(ingestionInput, userId, (status) => {
+          setIngestionStatus(status);
+        });
+
+        setActiveSourceId(source.id);
+        
+        if (source.status === 'ready') {
+          setIngestedSource(source);
+          setProcessingStage('source_ready');
+        }
+      } catch (err: unknown) {
+        setIngestionError(err instanceof Error ? err.message : 'Ingestion failed');
+        setProcessingStage('idle');
+      }
+    } else {
+      const finalGoal = goal.trim() || 'Gain a solid understanding of the topic';
+      onGenerateCourse(
+        input.trim(),
+        finalGoal,
+        knowledgeLevel,
+        timeCommitment,
+        difficulty,
+        intent === 'course+page'
+      );
+    }
+  };
+
+  const handleGenerateNotes = async (sourceId: string, type: 'notes' | 'study_guide') => {
+    setProcessingStage('generating');
+    try {
+      const result = await generateNotesOrStudyGuide(sourceId, type);
+      if (result && 'error' in result) {
+        setIngestionError(result.error);
+        setProcessingStage('source_ready');
+      } else if (result) {
+        if (onDocumentCreated) {
+          onDocumentCreated(result as AppDocument);
+        }
+        onOpenDocument(result.id);
+      }
+    } catch (err: unknown) {
+      setIngestionError(err instanceof Error ? err.message : 'Failed to generate');
+      setProcessingStage('source_ready');
+    }
+  };
+
+  // Shared "generate course from the ingested source" action. Used both from the
+  // source-ready view and from the "Try again" button in the generating view's
+  // error state, so a failed generation is always recoverable.
+  const startGenerationFromSource = () => {
+    if (!ingestedSource) return;
+    setProcessingStage('generating');
     onGenerateCourse(
-      input.trim(),
-      finalGoal,
+      input.trim() || ingestedSource.title,
+      goal.trim() || 'Understand the source content thoroughly',
       knowledgeLevel,
       timeCommitment,
       difficulty,
-      intent === 'course+page'
+      intent === 'course+page',
+      ingestedSource.id
     );
   };
 
@@ -390,11 +613,9 @@ export function HomePage({
     textareaRef.current?.focus();
   };
 
-  // Derived data
   const recentCourses = dashboardProgress
     .filter((p) => p.completedLessons > 0 || p.totalLessons > 0)
     .sort((a, b) => {
-      // Sort: in-progress first, then not-started, completed last
       if (a.percent > 0 && a.percent < 100 && !(b.percent > 0 && b.percent < 100)) return -1;
       if (b.percent > 0 && b.percent < 100 && !(a.percent > 0 && a.percent < 100)) return 1;
       return 0;
@@ -413,7 +634,6 @@ export function HomePage({
   const showContinueLearning = dashboardHasLoaded && recentCourses.length > 0;
   const loadingContinue = dashboardLoading && !dashboardHasLoaded;
 
-  // Generative loading state — replaces the whole page while generating
   if (generatingCourse) {
     return (
       <GenerationScreen
@@ -422,6 +642,351 @@ export function HomePage({
         knowledgeLevel={knowledgeLevel}
         includePage={intent === 'course+page'}
       />
+    );
+  }
+
+  if (processingStage === 'ingesting') {
+    return (
+      <div className="max-w-lg mx-auto py-24 text-center animate-fade-in space-y-6">
+        <div className="relative w-20 h-20 mx-auto">
+          <div className="absolute inset-0 rounded-full bg-terracotta-50 animate-gentle-pulse" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Loader2 className="w-10 h-10 text-terracotta-500 animate-spin" strokeWidth={1.5} />
+          </div>
+        </div>
+        <h2 className="font-serif text-2xl text-ink-700">Ingesting source material</h2>
+        <p className="text-sm font-serif italic text-warmgray-400 capitalize">
+          {ingestionStatus === 'uploading' && 'Uploading source to storage...'}
+          {ingestionStatus === 'extracting' && 'Extracting text and contents...'}
+          {ingestionStatus === 'understanding' && 'Analyzing and structuring source...'}
+          {ingestionStatus !== 'uploading' && ingestionStatus !== 'extracting' && ingestionStatus !== 'understanding' && `${ingestionStatus}...`}
+        </p>
+        <p className="text-xs text-warmgray-300">
+          This runs in the background. Please keep this page open. · {ingestingElapsed}s elapsed
+        </p>
+        {ingestingTimedOut && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left">
+            <p className="text-sm font-medium text-amber-800 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4" /> Taking longer than expected
+            </p>
+            <p className="text-xs text-amber-700 mt-1">
+              {attachedType === 'youtube'
+                ? 'YouTube transcription can take 30–60s depending on video length.'
+                : attachedType === 'audio'
+                ? 'Audio transcription can take 20–40s depending on file size.'
+                : attachedType === 'pdf'
+                ? 'PDF extraction is running in the background — this usually completes in under 30s.'
+                : 'Processing is taking longer than usual.'}
+              {' '}If this persists, you can cancel and retry.
+            </p>
+          </div>
+        )}
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={() => {
+              setProcessingStage('idle');
+              setActiveSourceId(null);
+              setIngestionError(ingestingTimedOut ? 'Ingestion timed out. Please retry — it now runs in background and avoids 504s.' : '');
+            }}
+            className="px-4 py-2 rounded-xl bg-cream-200 text-warmgray-600 hover:bg-cream-300 hover:text-ink-600 text-sm font-medium transition-colors"
+          >
+            Cancel
+          </button>
+          {ingestingTimedOut && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (!activeSourceId) return;
+                setIngestingElapsed(0);
+                setIngestionError('');
+                try {
+                  await retryIngestion(activeSourceId);
+                } catch (err) {
+                  console.error('Retry invoke failed:', err);
+                }
+              }}
+              className="px-4 py-2 rounded-xl bg-terracotta-500 text-cream-50 hover:bg-terracotta-600 text-sm font-medium transition-colors flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-4 h-4" /> Retry
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (processingStage === 'source_error') {
+    const errorMsg = ingestionError || 'Failed to process source material';
+    return (
+      <div className="max-w-lg mx-auto py-24 text-center animate-fade-in space-y-6">
+        <div className="relative w-16 h-16 mx-auto">
+          <div className="absolute inset-0 flex items-center justify-center">
+            <AlertCircle className="w-10 h-10 text-brick-500" strokeWidth={1.5} />
+          </div>
+        </div>
+        <h2 className="font-serif text-2xl text-ink-700">Source extraction failed</h2>
+        <div className="rounded-xl border border-brick-100 bg-brick-50 px-4 py-3 text-left">
+          <p className="text-sm text-brick-700" role="alert">{errorMsg}</p>
+        </div>
+        <p className="text-xs text-warmgray-400">
+          Try re-uploading the file, or check that it's not encrypted or corrupted.
+        </p>
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={async () => {
+              if (!activeSourceId) return;
+              setIngestionError('');
+              setIngestingElapsed(0);
+              setProcessingStage('ingesting');
+              setIngestionStatus('pending');
+              try {
+                await retryIngestion(activeSourceId);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : 'Retry failed';
+                setIngestionError(msg);
+                setProcessingStage('source_error');
+              }
+            }}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-terracotta-500 text-cream-50 hover:bg-terracotta-600 font-medium text-sm transition-colors shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-2"
+          >
+            <RefreshCw className="w-4 h-4" strokeWidth={1.5} />
+            Retry extraction
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setProcessingStage('idle');
+              setActiveSourceId(null);
+              setIngestedSource(null);
+              setAttachedFile(null);
+              setAttachedUrl('');
+              setAttachedType(null);
+              setIngestionError('');
+            }}
+            className="px-5 py-2.5 rounded-xl bg-cream-200 text-warmgray-600 hover:bg-cream-300 hover:text-ink-600 font-medium text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warmgray-400"
+          >
+            Start over
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (processingStage === 'source_ready' && ingestedSource) {    return (
+      <div className="max-w-2xl mx-auto space-y-6 animate-fade-in">
+        {/* Source-ready card — same visual shell as the main input card */}
+        <div className="rounded-2xl border border-cream-200 bg-cream-50 shadow-card overflow-hidden">
+
+          {/* Source badge */}
+          <div className="px-5 pt-4 pb-3 border-b border-cream-200 flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" strokeWidth={2} />
+            <span className="text-xs font-semibold text-emerald-600 uppercase tracking-wider">
+              Source ready
+            </span>
+            <span className="text-xs text-warmgray-400 truncate max-w-xs" title={ingestedSource.title}>
+              — {ingestedSource.title}
+            </span>
+          </div>
+
+          {/* Editable topic / title */}
+          <div className="px-5 pt-4">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  startGenerationFromSource();
+                }
+              }}
+              placeholder={`Course title or topic for "${ingestedSource.title}"...`}
+              rows={1}
+              className="w-full resize-none bg-transparent text-lg font-serif text-ink-700 placeholder-warmgray-300 focus:outline-none leading-snug"
+              style={{ minHeight: '2rem', maxHeight: '8rem' }}
+            />
+          </div>
+
+          {/* Intent picker — same inline pill buttons */}
+          <div className="px-5 py-3 space-y-3">
+            <div role="group" aria-label="What would you like to create?">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-warmgray-400 mb-2.5">
+                What would you like to create?
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {INTENTS.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    disabled={!item.available}
+                    onClick={() => setIntent(item.id)}
+                    title={item.available ? item.description : `${item.description} — coming soon`}
+                    aria-pressed={intent === item.id}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-1 ${
+                      !item.available
+                        ? 'opacity-40 cursor-not-allowed text-warmgray-400 bg-cream-100 border border-cream-200'
+                        : intent === item.id
+                        ? 'bg-terracotta-500 text-cream-50 shadow-soft'
+                        : 'bg-cream-200 text-warmgray-600 hover:bg-cream-300 hover:text-ink-600'
+                    }`}
+                  >
+                    {item.icon}
+                    {item.label}
+                    {!item.available && (
+                      <span className="text-[10px] font-normal opacity-70 ml-0.5">Soon</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Personalize toggle — mirrors main flow */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowCustomize(!showCustomize)}
+                className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-warmgray-400 hover:text-warmgray-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 rounded"
+              >
+                <span>Personalize your learning</span>
+                <ChevronDown
+                  className={`w-3 h-3 transition-transform ${showCustomize ? 'rotate-180' : ''}`}
+                  strokeWidth={2.5}
+                />
+              </button>
+              {showCustomize && (
+                <div className="mt-3 space-y-4 animate-fade-in">
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-2">
+                      <BarChart3 className="w-3 h-3 inline mr-1 -mt-0.5" strokeWidth={1.5} />
+                      Current Knowledge Level
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['Beginner', 'Intermediate', 'Advanced'].map((level) => (
+                        <button
+                          key={level}
+                          type="button"
+                          onClick={() => setKnowledgeLevel(level)}
+                          className={`py-2 rounded-lg text-xs font-medium transition-colors ${
+                            knowledgeLevel === level
+                              ? 'bg-terracotta-500 text-cream-50 shadow-soft'
+                              : 'bg-cream-100 border border-cream-200 text-warmgray-500 hover:bg-cream-200'
+                          }`}
+                        >
+                          {level}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Action bar */}
+          <div className="px-4 py-3 border-t border-cream-200 flex items-center justify-between gap-3">
+            <p className="text-xs text-warmgray-300">
+              Press <kbd className="px-1 py-0.5 rounded bg-cream-200 text-warmgray-500 font-mono text-[11px]">Enter</kbd> to start
+            </p>
+            <button
+              type="button"
+              onClick={startGenerationFromSource}
+              disabled={generatingCourse}
+              aria-label="Generate course from ingested source"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-terracotta-500 text-cream-50 hover:bg-terracotta-600 font-medium text-sm transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-2"
+            >
+              <Sparkles className="w-4 h-4" strokeWidth={1.5} />
+              Generate
+              <ArrowRight className="w-4 h-4" strokeWidth={2} />
+            </button>
+          </div>
+        </div>
+
+        {/* Error */}
+        {ingestionError && (
+          <p className="text-sm text-brick-500 bg-brick-50 border border-brick-100 rounded-xl px-4 py-3 animate-fade-in flex items-center gap-2" role="alert">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{ingestionError}</span>
+          </p>
+        )}
+
+        {/* Back link */}
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => {
+              setProcessingStage('idle');
+              setIngestedSource(null);
+              setActiveSourceId(null);
+              setAttachedFile(null);
+              setAttachedUrl('');
+              setAttachedType(null);
+              setIngestionError('');
+            }}
+            className="text-xs text-warmgray-400 hover:text-terracotta-500 transition-colors"
+          >
+            Cancel and go back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (processingStage === 'generating') {
+    const genFailed = !!(generationError || ingestionError);
+    return (
+      <div className="max-w-lg mx-auto py-24 text-center animate-fade-in space-y-6">
+        {genFailed ? (
+          <>
+            <div className="relative w-16 h-16 mx-auto">
+              <div className="absolute inset-0 flex items-center justify-center">
+                <AlertCircle className="w-8 h-8 text-brick-500" strokeWidth={1.5} />
+              </div>
+            </div>
+            <h2 className="font-serif text-2xl text-ink-700">Generation didn't finish</h2>
+            <p className="text-sm text-warmgray-400 font-serif italic" role="alert">
+              {generationError || ingestionError}
+            </p>
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={startGenerationFromSource}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-terracotta-500 text-cream-50 hover:bg-terracotta-600 font-medium text-sm transition-colors shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-2"
+              >
+                <RefreshCw className="w-4 h-4" strokeWidth={1.5} />
+                Try again
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIngestionError('');
+                  setProcessingStage('source_ready');
+                }}
+                className="px-5 py-2.5 rounded-xl bg-cream-200 text-warmgray-600 hover:bg-cream-300 hover:text-ink-600 font-medium text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warmgray-400"
+              >
+                Cancel and go back
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="relative w-20 h-20 mx-auto">
+              <div className="absolute inset-0 rounded-full bg-terracotta-50 animate-gentle-pulse" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Loader2 className="w-10 h-10 text-terracotta-500 animate-spin" strokeWidth={1.5} />
+              </div>
+            </div>
+            <h2 className="font-serif text-2xl text-ink-700">Creating your study resources</h2>
+            <p className="text-sm text-warmgray-400 font-serif italic">
+              Generating lessons, flashcards, and quizzes from grounding source...
+            </p>
+            <p className="text-xs text-warmgray-300">
+              This will take 15–30 seconds.
+            </p>
+          </>
+        )}
+      </div>
     );
   }
 
@@ -453,8 +1018,90 @@ export function HomePage({
             />
           </div>
 
+          {/* Hidden file input */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            className="hidden"
+          />
+
+          {/* Link Attachment Input */}
+          {showLinkInput && (
+            <div className="px-5 pb-3 flex gap-2 animate-fade-in">
+              <input
+                type="text"
+                value={linkInput}
+                onChange={(e) => setLinkInput(e.target.value)}
+                placeholder="Paste YouTube or website article URL..."
+                className="flex-1 px-3 py-1.5 rounded-lg bg-cream-100 border border-cream-200 text-xs text-ink-600 focus:outline-none focus:border-sand-350 transition-colors"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAttachLinkSubmit();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={handleAttachLinkSubmit}
+                className="px-3 py-1.5 rounded-lg bg-terracotta-500 text-cream-50 text-xs font-semibold hover:bg-terracotta-600 transition-colors"
+              >
+                Attach
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLinkInput(false);
+                  setLinkInput('');
+                }}
+                className="px-2 py-1.5 text-warmgray-400 hover:text-ink-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* Attachment Badge */}
+          {attachedType && (
+            <div className="mx-5 mb-3 flex items-center justify-between bg-cream-200/50 rounded-lg p-2 border border-cream-200 animate-fade-in">
+              <div className="flex items-center gap-2 min-w-0">
+                {attachedType === 'pdf' && (
+                  <span className="text-[10px] font-bold tracking-wider uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded flex-shrink-0">
+                    PDF File
+                  </span>
+                )}
+                {attachedType === 'audio' && (
+                  <span className="text-[10px] font-bold tracking-wider uppercase bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded flex-shrink-0">
+                    Audio File
+                  </span>
+                )}
+                {attachedType === 'youtube' && (
+                  <span className="text-[10px] font-bold tracking-wider uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded flex-shrink-0">
+                    YouTube
+                  </span>
+                )}
+                {attachedType === 'web' && (
+                  <span className="text-[10px] font-bold tracking-wider uppercase bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded flex-shrink-0">
+                    Web Link
+                  </span>
+                )}
+                <span className="text-xs font-medium text-ink-600 truncate">
+                  {attachedFile ? attachedFile.name : attachedUrl}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleRemoveAttachment}
+                className="text-warmgray-400 hover:text-ink-600 p-0.5 transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* Intent picker — revealed when input is non-empty */}
-          {showIntentPicker && (
+          {showIntentPicker && !attachedType && (
             <div className="px-5 pb-3 animate-fade-in space-y-3">
               <div role="group" aria-label="What would you like to create?">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-warmgray-400 mb-2.5">
@@ -501,8 +1148,8 @@ export function HomePage({
                 >
                   <span>Personalize your learning</span>
                   <ChevronDown
-                    className={`w-3 h-3 transition-transform ${showCustomize ? 'rotate-180' : ''}`}
-                    strokeWidth={2.5}
+                     className={`w-3 h-3 transition-transform ${showCustomize ? 'rotate-180' : ''}`}
+                     strokeWidth={2.5}
                   />
                 </button>
 
@@ -597,10 +1244,38 @@ export function HomePage({
 
           {/* Action bar */}
           <div className="px-4 py-3 border-t border-cream-200 flex items-center justify-between gap-3">
-            {/* Example prompts — shown when input is empty */}
+            {/* Attachment Tools */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleFileAttachClick('pdf')}
+                title="Attach PDF Document"
+                className="w-8.5 h-8.5 rounded-lg flex items-center justify-center text-warmgray-400 hover:text-ink-600 hover:bg-cream-200 transition-colors"
+              >
+                <Paperclip className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFileAttachClick('audio')}
+                title="Attach Audio File"
+                className="w-8.5 h-8.5 rounded-lg flex items-center justify-center text-warmgray-400 hover:text-ink-600 hover:bg-cream-200 transition-colors"
+              >
+                <Mic className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowLinkInput(!showLinkInput)}
+                title="Attach Web or YouTube Link"
+                className="w-8.5 h-8.5 rounded-lg flex items-center justify-center text-warmgray-400 hover:text-ink-600 hover:bg-cream-200 transition-colors"
+              >
+                <LinkIcon className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Hint or prompt suggestions */}
             {!showIntentPicker ? (
-              <div className="flex flex-wrap gap-2 flex-1" role="list" aria-label="Example topics">
-                {EXAMPLE_PROMPTS.map((ex) => (
+              <div className="hidden sm:flex flex-wrap gap-2 flex-1 justify-end" role="list" aria-label="Example topics">
+                {EXAMPLE_PROMPTS.slice(0, 3).map((ex) => (
                   <button
                     key={ex}
                     type="button"
@@ -613,8 +1288,8 @@ export function HomePage({
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-warmgray-300 flex-1">
-                Press <kbd className="px-1 py-0.5 rounded bg-cream-200 text-warmgray-500 font-mono text-[11px]">Enter</kbd> to generate · Shift+Enter for new line
+              <p className="text-xs text-warmgray-300 flex-1 text-right pr-2">
+                Press <kbd className="px-1 py-0.5 rounded bg-cream-200 text-warmgray-500 font-mono text-[11px]">Enter</kbd> to start
               </p>
             )}
 
@@ -622,20 +1297,21 @@ export function HomePage({
               type="button"
               onClick={handleSubmit}
               disabled={!input.trim() || generatingCourse}
-              aria-label="Generate learning content"
+              aria-label="Process and generate study resources"
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-terracotta-500 text-cream-50 hover:bg-terracotta-600 font-medium text-sm transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-2"
             >
               <Sparkles className="w-4 h-4" strokeWidth={1.5} />
-              Generate
+              {attachedType ? 'Ingest Source' : 'Generate'}
               <ArrowRight className="w-4 h-4" strokeWidth={2} />
             </button>
           </div>
         </div>
 
         {/* Error */}
-        {generationError && (
-          <p className="mt-3 text-sm text-brick-500 bg-brick-50 border border-brick-100 rounded-xl px-4 py-3 animate-fade-in" role="alert">
-            {generationError}
+        {(generationError || ingestionError) && (
+          <p className="mt-3 text-sm text-brick-500 bg-brick-50 border border-brick-100 rounded-xl px-4 py-3 animate-fade-in flex items-center gap-2" role="alert">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{generationError || ingestionError}</span>
           </p>
         )}
       </div>

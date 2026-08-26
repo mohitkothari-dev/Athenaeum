@@ -98,20 +98,25 @@ The `VITE_SUPABASE_ANON_KEY` is **designed to be public**. It's protected by Row
 ## Step 6: Configure Edge Function Secrets
 
 ```bash
-# Set the Gemini API key for edge functions
+# Set API keys for edge functions (Gemini required; Mistral recommended as primary for generate-course)
 supabase secrets set GEMINI_API_KEY=paste_your_gemini_key_here
+supabase secrets set MISTRAL_API_KEY=paste_your_mistral_key_here  # optional but recommended — gets console.mistral.ai/api-keys → mistral-large-latest
 
-# Verify it was set (shows key name but hides value)
+# Verify they were set (shows key names but hides values)
 supabase secrets list
 ```
 
+> `generate-course` (`supabase/functions/generate-course/index.ts:489`) uses `MISTRAL_API_KEY` first if present, falls back to `GEMINI_API_KEY` (`gemini-3.6-flash`/`3.5-flash`). No `VITE_` key needed — `src/lib/api.ts:274` synthetic `Server` provider hits edge even without `VITE_MISTRAL_API_KEY`. `ingest-source` always uses `GEMINI_API_KEY`.
+
 ---
 
-## Step 7: Deploy Edge Function
+## Step 7: Deploy Edge Functions
 
 ```bash
-# Deploy the course generation function
+# Deploy course generation + ingestion functions (redeploy after any secret change)
 supabase functions deploy generate-course
+supabase functions deploy ingest-source
+supabase functions deploy generate-notes
 ```
 
 ---

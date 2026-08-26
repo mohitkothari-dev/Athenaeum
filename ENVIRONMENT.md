@@ -51,7 +51,6 @@ cp .env.example .env
 
 **NEVER put sensitive API keys in .env:**
 - ❌ Don't put `VITE_GEMINI_API_KEY` - it would be exposed in your bundle
-- ❌ Don't put `VITE_OPENAI_API_KEY` - it would be exposed in your bundle  
 - ❌ Don't put any payment API keys (Stripe secret, etc.)
 - ❌ Don't put the `service_role` key - it bypasses all security!
 
@@ -77,7 +76,8 @@ These are automatically available in all edge functions. **No setup required.**
 
 | Variable | Required | Purpose | Setup Command |
 |----------|----------|---------|---------------|
-| `GEMINI_API_KEY` | ✅ Yes | Google Gemini API for course generation | `supabase secrets set GEMINI_API_KEY=your_key` |
+| `GEMINI_API_KEY` | ✅ Yes | Google Gemini API — fallback provider (also used for YouTube/PDF ingestion) | `supabase secrets set GEMINI_API_KEY=your_key` |
+| `MISTRAL_API_KEY` | ⚪ Recommended | Mistral API — **primary** provider for course generation (`mistral-large-latest`). If set, `generate-course` tries Mistral first, falls back to Gemini on `429/5xx/validation` | `supabase secrets set MISTRAL_API_KEY=your_key` |
 
 ### Setup Edge Function Secrets
 
@@ -88,15 +88,22 @@ supabase login
 # 2. Link your project (find ref in Dashboard > Settings > General)
 supabase link --project-ref your_project_ref
 
-# 3. Set the Gemini API key
+# 3. Set API keys (Gemini is required; Mistral is recommended as primary)
 supabase secrets set GEMINI_API_KEY=your_actual_gemini_api_key
+supabase secrets set MISTRAL_API_KEY=your_mistral_api_key  # optional but recommended
 
 # 4. Verify secrets were set
 supabase secrets list
 
-# 5. Deploy edge functions
+# 5. Deploy edge functions (rerun after any secret change)
 supabase functions deploy generate-course
+supabase functions deploy ingest-source
+supabase functions deploy generate-notes
 ```
+
+> **Provider order:** `generate-course` (`supabase/functions/generate-course/index.ts:489`) builds `apiProviders = [...(MISTRAL_API_KEY ? [Mistral] : []), Gemini]`. Mistral is tried first (with `429` retry-after), Gemini is fallback. No `VITE_` client key is required — the synthetic `Server` provider in `src/lib/api.ts:274` ensures the request reaches the edge even when no `VITE_MISTRAL_API_KEY`/`VITE_GEMINI_API_KEY` is set; the edge owns keys via `Deno.env.get`.
+
+> **Ingestion:** `ingest-source` always uses `GEMINI_API_KEY` (YouTube `file_data` + PDF `inlineData` via `callGeminiMultimodal` `gemini-3.6-flash`/`3.5-flash` with `MEDIA_RESOLUTION_LOW`).
 
 ### Local Development
 
@@ -104,11 +111,13 @@ For local edge function testing, create `supabase/functions/.env`:
 
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
+MISTRAL_API_KEY=your_mistral_api_key_here  # optional — enables Mistral primary locally
 ```
 
 Then serve locally:
 ```bash
 supabase functions serve generate-course --env-file supabase/functions/.env
+supabase functions serve ingest-source --env-file supabase/functions/.env
 ```
 
 ---
@@ -121,9 +130,10 @@ supabase functions serve generate-course --env-file supabase/functions/.env
 - [ ] Run `npm run verify-setup` to check frontend config
 - [ ] Run `supabase login`
 - [ ] Run `supabase link --project-ref YOUR_REF`
-- [ ] Run `supabase secrets set GEMINI_API_KEY=YOUR_KEY` (server-side only!)
+- [ ] Run `supabase secrets set GEMINI_API_KEY=YOUR_KEY` (server-side only! — required)
+- [ ] Run `supabase secrets set MISTRAL_API_KEY=YOUR_KEY` (server-side only! — recommended primary)
 - [ ] Run `supabase secrets list` to verify
-- [ ] Run `supabase functions deploy generate-course`
+- [ ] Run `supabase functions deploy generate-course && supabase functions deploy ingest-source && supabase functions deploy generate-notes`
 - [ ] Start dev server with `npm run dev`
 
 **Security Note:** Never put `GEMINI_API_KEY` or other sensitive API keys in your `.env` file!
@@ -149,6 +159,17 @@ supabase functions serve generate-course --env-file supabase/functions/.env
 3. Click **"Get API Key"** or **"Create API Key"**
 4. Copy the key
 5. Set via Supabase CLI: `supabase secrets set GEMINI_API_KEY=your_key`
+
+### Mistral API Key (recommended — primary provider)
+
+1. Visit [Mistral AI — La Plateforme](https://console.mistral.ai/api-keys)
+2. Sign in / create account
+3. **API Keys** → **Create new key** (model `mistral-large-latest` is used by `generate-course`)
+4. Copy the key
+5. Set via Supabase CLI: `supabase secrets set MISTRAL_API_KEY=your_key`
+6. Redeploy: `supabase functions deploy generate-course`
+
+> No `VITE_MISTRAL_API_KEY` needed. Client `src/lib/api.ts:229` priority is `Mistral (1) > Groq (2) > Gemini (3)`, but `SERVER_PROVIDER:274` ensures edge is hit even without `VITE_` keys. Edge `Deno.env.get("MISTRAL_API_KEY")` is authoritative.
 
 ---
 
@@ -176,7 +197,9 @@ supabase secrets set GEMINI_API_KEY=your_key
 ```bash
 # Always redeploy after changing secrets
 supabase secrets set GEMINI_API_KEY=new_key
+supabase secrets set MISTRAL_API_KEY=new_key
 supabase functions deploy generate-course  # Don't forget this!
+supabase functions deploy ingest-source
 ```
 
 ### ❌ Using service role key in frontend
