@@ -46,6 +46,10 @@ interface SidebarProps {
   onDeleteCanvas: (canvasId: string) => Promise<void>;
   onRenameCanvas: (canvasId: string, title: string) => Promise<void>;
 
+  // Course CRUD
+  onDeleteCourse: (courseId: string) => Promise<void>;
+  onRenameCourse: (courseId: string, title: string) => Promise<void>;
+
   // Auth
   userEmail: string;
   onSignOut: () => void;
@@ -123,6 +127,8 @@ export function Sidebar({
   onCreateCanvas,
   onDeleteCanvas,
   onRenameCanvas,
+  onDeleteCourse,
+  onRenameCourse,
   userEmail,
   onSignOut,
 }: SidebarProps) {
@@ -228,29 +234,19 @@ export function Sidebar({
                   Loading...
                 </div>
               ) : (
-                courses.map((course) => {
-                  const isActive =
-                    activeCourseId === course.id &&
-                    (activeView === 'course' || activeView === 'lesson');
-                  return (
-                    <button
-                      key={course.id}
-                      onClick={() => onNavigateCourse(course.id)}
-                      title={course.title}
-                      className={`w-full flex items-center gap-2 pl-8 pr-3 py-1.5 rounded-lg text-[12px] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terracotta-400 focus-visible:ring-offset-1 ${
-                        isActive
-                          ? 'bg-cream-200 text-ink-700 font-medium'
-                          : 'text-warmgray-500 hover:bg-cream-200/60 hover:text-ink-600'
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${COURSE_COLOR_DOTS[course.cover_color] || COURSE_COLOR_DOTS.terracotta}`}
-                        aria-hidden="true"
-                      />
-                      <span className="truncate">{course.title}</span>
-                    </button>
-                  );
-                })
+                courses.map((course) => (
+                  <CourseSidebarItem
+                    key={course.id}
+                    course={course}
+                    isActive={
+                      activeCourseId === course.id &&
+                      (activeView === 'course' || activeView === 'lesson')
+                    }
+                    onNavigate={onNavigateCourse}
+                    onRename={onRenameCourse}
+                    onDelete={onDeleteCourse}
+                  />
+                ))
               )}
 
             </div>
@@ -558,6 +554,154 @@ function DocumentTreeItem({
               onCreateSubPage={onCreateSubPage}
             />
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- CourseSidebarItem ----------
+
+interface CourseSidebarItemProps {
+  course: Course;
+  isActive: boolean;
+  onNavigate: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
+  onRename: (id: string, title: string) => Promise<void>;
+}
+
+function CourseSidebarItem({
+  course,
+  isActive,
+  onNavigate,
+  onDelete,
+  onRename,
+}: CourseSidebarItemProps) {
+  const [showMenu, setShowMenu] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(course.title);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showMenu]);
+
+  useEffect(() => {
+    if (isRenaming && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isRenaming]);
+
+  useEffect(() => {
+    if (!isRenaming) setRenameValue(course.title);
+  }, [course.title, isRenaming]);
+
+  const handleRenameSubmit = async () => {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== course.title) {
+      await onRename(course.id, trimmed);
+    } else {
+      setRenameValue(course.title);
+    }
+    setIsRenaming(false);
+  };
+
+  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') void handleRenameSubmit();
+    else if (e.key === 'Escape') {
+      setRenameValue(course.title);
+      setIsRenaming(false);
+    }
+  };
+
+  return (
+    <div
+      className={`group flex items-center rounded-lg transition-all relative ${
+        isActive
+          ? 'bg-cream-200 text-ink-700'
+          : 'text-warmgray-500 hover:bg-cream-200/60 hover:text-ink-600'
+      }`}
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ml-8 ${COURSE_COLOR_DOTS[course.cover_color] || COURSE_COLOR_DOTS.terracotta}`}
+        aria-hidden="true"
+      />
+      {isRenaming ? (
+        <input
+          ref={inputRef}
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onBlur={() => void handleRenameSubmit()}
+          onKeyDown={handleRenameKeyDown}
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Rename course"
+          className="flex-1 ml-2 mr-1 text-[12px] bg-cream-50 border border-cream-300 rounded px-1.5 py-0.5 text-ink-700 focus:outline-none focus:border-terracotta-300 min-w-0"
+        />
+      ) : (
+        <button
+          onClick={() => onNavigate(course.id)}
+          onDoubleClick={(e) => { e.preventDefault(); setIsRenaming(true); }}
+          title={course.title}
+          className="flex-1 flex items-center gap-2 pl-2 pr-1 py-1.5 min-w-0 text-left focus-visible:outline-none"
+          aria-current={isActive ? 'page' : undefined}
+        >
+          <span className={`text-[12px] truncate ${isActive ? 'font-medium' : ''}`}>
+            {course.title}
+          </span>
+        </button>
+      )}
+
+      {!isRenaming && (
+        <div className="flex items-center gap-0.5 pr-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
+            title="More options"
+            aria-label="More options"
+            aria-haspopup="true"
+            aria-expanded={showMenu}
+            className="w-5 h-5 rounded flex items-center justify-center text-warmgray-400 hover:text-ink-600 hover:bg-cream-300/50 transition-colors"
+          >
+            <MoreHorizontal className="w-3 h-3" strokeWidth={2} />
+          </button>
+        </div>
+      )}
+
+      {showMenu && (
+        <div
+          ref={menuRef}
+          role="menu"
+          className="absolute right-0 top-full mt-1 w-36 bg-cream-50 border border-cream-200 rounded-xl shadow-lifted z-50 py-1 animate-fade-in-soft"
+        >
+          <button
+            role="menuitem"
+            onClick={() => { setShowMenu(false); setIsRenaming(true); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-warmgray-600 hover:bg-cream-100 hover:text-ink-600 transition-colors"
+          >
+            <Pencil className="w-3.5 h-3.5" strokeWidth={1.5} />
+            Rename
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              setShowMenu(false);
+              if (confirm('Delete this course? This cannot be undone. All lessons and progress will be lost.')) {
+                void onDelete(course.id);
+              }
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-brick-500 hover:bg-brick-50 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
+            Delete
+          </button>
         </div>
       )}
     </div>
