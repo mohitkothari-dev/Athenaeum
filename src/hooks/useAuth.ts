@@ -48,7 +48,36 @@ export function useAuth() {
   }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    try {
+      const { error } = await supabase.auth.signOut({ scope: 'global' });
+      if (error) throw error;
+    } catch (err) {
+      console.warn('[auth] global signOut failed, falling back to local:', err);
+      try {
+        const { error: localError } = await supabase.auth.signOut({ scope: 'local' });
+        if (localError) throw localError;
+      } catch (localErr) {
+        console.warn('[auth] local signOut also failed, clearing storage manually:', localErr);
+        // Ultimate fallback: manually purge Supabase auth storage so UI can recover even if API is 403
+        try {
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && (k.startsWith('sb-') && k.includes('-auth-token'))) keysToRemove.push(k);
+          }
+          keysToRemove.forEach((k) => localStorage.removeItem(k));
+          // Also clear the standard supabase key pattern without sb- prefix fallback
+          localStorage.removeItem('supabase.auth.token');
+        } catch {
+          /* ignore storage errors */
+        }
+      }
+    } finally {
+      // Force local state to signed-out even if server returned 403 (e.g., expired access_token / revocation forbidden).
+      // onAuthStateChange will also fire, but this guarantees the UI unblocks immediately.
+      setUser(null);
+      setLoading(false);
+    }
   }, []);
 
   return {
