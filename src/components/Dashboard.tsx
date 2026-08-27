@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Plus, Clock, CheckCircle, BookOpen, Loader2, Trash2, ArrowRight, GraduationCap } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Plus, Clock, CheckCircle, BookOpen, Loader2, Trash2, Pencil, ArrowRight, GraduationCap } from 'lucide-react';
 import type { Course, CourseWithProgress } from '@/types';
 import { COURSE_COLOR_GRADIENTS } from '@/lib/courseColors';
 
@@ -8,6 +8,7 @@ interface DashboardProps {
   onGenerate: () => void;
   onProgress: () => void;
   onDeleteCourse: (courseId: string) => Promise<void>;
+  onRenameCourse: (courseId: string, title: string) => Promise<void>;
   courses: Course[];
   coursesLoading: boolean;
   dashboardProgress: CourseWithProgress[];
@@ -20,6 +21,7 @@ export function Dashboard({
   onGenerate,
   onProgress,
   onDeleteCourse,
+  onRenameCourse,
   courses,
   coursesLoading,
   dashboardProgress,
@@ -103,6 +105,7 @@ export function Dashboard({
                     colorClass={COURSE_COLOR_GRADIENTS[p.course.cover_color] || COURSE_COLOR_GRADIENTS.terracotta}
                     onOpen={() => onOpenCourse(p.course.id)}
                     onDelete={() => setConfirmDelete(p.course.id)}
+                    onRename={(title) => onRenameCourse(p.course.id, title)}
                     confirmDelete={confirmDelete === p.course.id}
                     onConfirmDelete={() => handleDelete(p.course.id)}
                     onCancelDelete={() => setConfirmDelete(null)}
@@ -126,6 +129,7 @@ export function Dashboard({
                     colorClass={COURSE_COLOR_GRADIENTS[p.course.cover_color] || COURSE_COLOR_GRADIENTS.terracotta}
                     onOpen={() => onOpenCourse(p.course.id)}
                     onDelete={() => setConfirmDelete(p.course.id)}
+                    onRename={(title) => onRenameCourse(p.course.id, title)}
                     confirmDelete={confirmDelete === p.course.id}
                     onConfirmDelete={() => handleDelete(p.course.id)}
                     onCancelDelete={() => setConfirmDelete(null)}
@@ -149,6 +153,7 @@ export function Dashboard({
                     colorClass={COURSE_COLOR_GRADIENTS[p.course.cover_color] || COURSE_COLOR_GRADIENTS.terracotta}
                     onOpen={() => onOpenCourse(p.course.id)}
                     onDelete={() => setConfirmDelete(p.course.id)}
+                    onRename={(title) => onRenameCourse(p.course.id, title)}
                     confirmDelete={confirmDelete === p.course.id}
                     onConfirmDelete={() => handleDelete(p.course.id)}
                     onCancelDelete={() => setConfirmDelete(null)}
@@ -168,6 +173,7 @@ interface CourseCardProps {
   colorClass: string;
   onOpen: () => void;
   onDelete: () => void;
+  onRename: (title: string) => void;
   confirmDelete: boolean;
   onConfirmDelete: () => void;
   onCancelDelete: () => void;
@@ -178,11 +184,44 @@ function CourseCard({
   colorClass,
   onOpen,
   onDelete,
+  onRename,
   confirmDelete,
   onConfirmDelete,
   onCancelDelete,
 }: CourseCardProps) {
   const { course, totalLessons, completedLessons, percent } = progress;
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(course.title);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isRenaming && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isRenaming]);
+
+  useEffect(() => {
+    if (!isRenaming) setRenameValue(course.title);
+  }, [course.title, isRenaming]);
+
+  const handleRenameSubmit = async () => {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== course.title) {
+      await onRename(trimmed);
+    } else {
+      setRenameValue(course.title);
+    }
+    setIsRenaming(false);
+  };
+
+  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') void handleRenameSubmit();
+    else if (e.key === 'Escape') {
+      setRenameValue(course.title);
+      setIsRenaming(false);
+    }
+  };
 
   return (
     <div className="group bg-cream-50 rounded-xl2 border border-cream-200 overflow-hidden hover:border-sand-200 hover:shadow-card transition-all">
@@ -190,7 +229,25 @@ function CourseCard({
       <div className="p-5">
         <div className="flex items-start justify-between gap-3 mb-2">
           <div className="flex-1 min-w-0">
-            <h3 className="font-serif text-lg text-ink-700 leading-snug mb-1">{course.title}</h3>
+            {isRenaming ? (
+              <input
+                ref={inputRef}
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onBlur={() => void handleRenameSubmit()}
+                onKeyDown={handleRenameKeyDown}
+                aria-label="Rename course"
+                className="w-full font-serif text-lg text-ink-700 bg-cream-100 border border-cream-300 rounded-lg px-2 py-1 focus:outline-none focus:border-terracotta-300 mb-1"
+              />
+            ) : (
+              <h3
+                className="font-serif text-lg text-ink-700 leading-snug mb-1 truncate"
+                title={course.title}
+                onDoubleClick={() => setIsRenaming(true)}
+              >
+                {course.title}
+              </h3>
+            )}
             <p className="text-sm text-warmgray-400 line-clamp-2 leading-relaxed">{course.description}</p>
           </div>
         </div>
@@ -243,12 +300,24 @@ function CourseCard({
               {completedLessons > 0 ? 'Continue' : 'Start'}
               <ArrowRight className="w-4 h-4" strokeWidth={2} />
             </button>
-            <button
-              onClick={onDelete}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-warmgray-300 hover:text-brick-500 hover:bg-brick-50 transition-colors"
-            >
-              <Trash2 className="w-4 h-4" strokeWidth={1.5} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setIsRenaming(true)}
+                title="Rename course"
+                aria-label="Rename course"
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-warmgray-300 hover:text-ink-600 hover:bg-cream-200 transition-colors"
+              >
+                <Pencil className="w-4 h-4" strokeWidth={1.5} />
+              </button>
+              <button
+                onClick={onDelete}
+                title="Delete course"
+                aria-label="Delete course"
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-warmgray-300 hover:text-brick-500 hover:bg-brick-50 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" strokeWidth={1.5} />
+              </button>
+            </div>
           </div>
         )}
       </div>

@@ -22,6 +22,7 @@ import {
   fetchCourses,
   fetchCourseProgress,
   deleteCourse,
+  updateCourse,
   loadCanvases,
   createCanvas,
   updateCanvas,
@@ -227,6 +228,7 @@ function App() {
 
   // Realtime sync for courses — picks up status transitions from the background
   // generation task (generating → ready | error) without any polling.
+  // Also reflects rename/delete performed from other tabs/clients in real time.
   useEffect(() => {
     if (!userId) return;
     const channel = supabase
@@ -247,10 +249,18 @@ function App() {
           setCourses((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
         },
       )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'courses', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const deleted = payload.old as { id: string };
+          setCourses((prev) => prev.filter((c) => c.id !== deleted.id));
+        },
+      )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, [userId]);
 
@@ -320,6 +330,15 @@ function App() {
       setCourses(prev => prev.filter(c => c.id !== courseId));
     } catch (err) {
       console.error('Failed to delete course:', err);
+    }
+  };
+
+  const handleRenameCourse = async (courseId: string, title: string) => {
+    try {
+      const updated = await updateCourse(courseId, { title });
+      setCourses(prev => prev.map(c => c.id === courseId ? updated : c));
+    } catch (err) {
+      console.error('Failed to rename course:', err);
     }
   };
 
@@ -474,6 +493,7 @@ function App() {
             onGenerate={() => navigate({ name: 'home' })}
             onProgress={() => navigate({ name: 'progress' })}
             onDeleteCourse={handleDeleteCourse}
+            onRenameCourse={handleRenameCourse}
             courses={readyCourses}
             coursesLoading={coursesLoading}
             dashboardProgress={dashboardProgress}
@@ -598,6 +618,8 @@ function App() {
         onCreateCanvas={handleCreateCanvas}
         onDeleteCanvas={handleDeleteCanvas}
         onRenameCanvas={handleRenameCanvas}
+        onDeleteCourse={handleDeleteCourse}
+        onRenameCourse={handleRenameCourse}
         userEmail={user.email || ''}
         onSignOut={signOut}
       />

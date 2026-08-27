@@ -210,7 +210,29 @@ export async function recordFlashcardReview(
 }
 
 export async function deleteCourse(courseId: string): Promise<void> {
-  await supabase.from('courses').delete().eq('id', courseId);
+  const { error } = await supabase.from('courses').delete().eq('id', courseId);
+  if (error) throw error;
+}
+
+export async function updateCourse(
+  id: string,
+  updates: Partial<Pick<Course, 'title' | 'description'>>,
+): Promise<Course> {
+  if (updates.title !== undefined && !updates.title.trim()) {
+    throw new Error('Course title cannot be empty.');
+  }
+  const { data, error } = await supabase
+    .from('courses')
+    .update({
+      ...updates,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data as Course;
 }
 
 export interface GenerationParams {
